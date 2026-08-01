@@ -1,5 +1,5 @@
 import { ReactiveCollection } from "@core/reactive-collection";
-import { computed, type ReadonlySignal } from "@core/signal";
+import { batch, computed, type ReadonlySignal } from "@core/signal";
 import type { OCLVal } from "@core/values";
 import { vint } from "@core/values";
 import { ReactiveObject } from "./reactive-object";
@@ -65,12 +65,13 @@ export class TypedReactiveCollection<T = ReactiveObject> {
     const k = `${classId}:${oid}`;
     const obj = this._map.get(k);
     if (!obj) return;
-    this.coll.remove(obj.toVal());
-    this._map.delete(k);
-  }
-
-  private allObjects(): T[] {
-    return [...this._map.values()].map((o) => this._wrap(o));
+    // The delta has to be processed while the object is still resolvable, but
+    // dependents must only see the result once it is gone from the map. One
+    // batch around both keeps them from observing the state in between.
+    batch(() => {
+      this.coll.remove(obj.toVal());
+      this._map.delete(k);
+    });
   }
 
   private objFrom(v: OCLVal): ReactiveObject | undefined {
@@ -99,7 +100,7 @@ export class TypedReactiveCollection<T = ReactiveObject> {
     });
   }
 
-  isUnique(keyFn: (obj: T) => number | null): ReadonlySignal<boolean> {
+  isUnique(keyFn: (obj: T) => string | number | null): ReadonlySignal<boolean> {
     return this.coll.isUnique((v) => {
       const obj = this.objFrom(v);
       return obj ? keyFn(this._wrap(obj)) : null;
