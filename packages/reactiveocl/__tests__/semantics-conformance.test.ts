@@ -9,6 +9,7 @@ import { Transaction } from "@core/transaction";
 import { TInt, TObject, type Expr, type MetaModel } from "@core/types";
 import { vcoll, VFalse, vint, vobj, vstring, VTrue } from "@core/values";
 import { ReactiveStore } from "@api/reactive-store";
+import { TypedReactiveCollection } from "@api/reactive-collection";
 
 /** Metamodel with Manager <= Employee. */
 const hierarchy: MetaModel = {
@@ -96,6 +97,50 @@ describe("ReactiveStore exposes the class hierarchy as a MetaModel", () => {
     const env = new Map([["self", vobj(m.oid, "Manager")]]);
     const kindOf: Expr = { tag: "EKindOf", e: { tag: "ESelf" }, C: "Employee" };
     expect(evalExpr(kindOf, env, s.core, null, s.metaModel)).toEqual(VTrue);
+  });
+
+  it("objects answer the type tests directly", () => {
+    const s = hierarchyStore();
+    const m = s.getClass("Manager")!.create({});
+    const e = s.getClass("Employee")!.create({});
+
+    expect(m.oclIsKindOf("Employee")).toBe(true);
+    expect(m.oclIsKindOf("Manager")).toBe(true);
+    expect(m.oclIsTypeOf("Employee")).toBe(false);
+    expect(m.oclIsTypeOf("Manager")).toBe(true);
+
+    expect(e.oclIsKindOf("Manager")).toBe(false);
+    expect(e.oclIsKindOf("Employee")).toBe(true);
+    expect(e.oclIsTypeOf("Employee")).toBe(true);
+  });
+
+  it("a class without a superclass is a kind of itself only", () => {
+    const s = new ReactiveStore();
+    s.registerClass("C", {});
+    const o = s.getClass("C")!.create({});
+    expect(o.oclIsKindOf("C")).toBe(true);
+    expect(o.oclIsKindOf("D")).toBe(false);
+  });
+
+  it("kind tests are stable, so views filtered by them stay exact", () => {
+    const s = hierarchyStore();
+    const E = s.getClass("Employee")!;
+    const M = s.getClass("Manager")!;
+    const staff = new TypedReactiveCollection([E.create({}), M.create({})]);
+
+    const managers = staff.select((o) => o.oclIsKindOf("Manager"));
+    const managerCount$ = managers.size();
+    expect(managerCount$.value).toBe(1);
+
+    const extra = M.create({});
+    staff.add(extra);
+    expect(managerCount$.value).toBe(2);
+
+    staff.removeByOid("Manager", extra.oid);
+    expect(managerCount$.value).toBe(1);
+
+    staff.add(E.create({}));
+    expect(managerCount$.value).toBe(1);
   });
 });
 

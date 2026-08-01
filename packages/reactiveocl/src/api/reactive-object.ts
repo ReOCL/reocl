@@ -8,14 +8,32 @@ import { TypedReactiveCollection } from "./reactive-collection";
 /** A reactive object wraps a Store object with typed field access. */
 export class ReactiveObject {
   private collections: Map<string, TypedReactiveCollection>;
+  /** This object's class and its superclasses, most specific first. */
+  private readonly ancestry: readonly ClassId[];
 
   constructor(
     public readonly store: Store,
     public readonly classId: ClassId,
     public readonly oid: number,
     collections: Map<string, TypedReactiveCollection> = new Map(),
+    ancestry: readonly ClassId[] = [classId],
   ) {
     this.collections = collections;
+    this.ancestry = ancestry;
+  }
+
+  /** Exact type test: true when this object's class is exactly C. */
+  oclIsTypeOf(C: ClassId): boolean {
+    return this.classId === C;
+  }
+
+  /**
+   * Kind test: true when this object's class is C or one of its subclasses.
+   * The class of an object never changes, so this predicate is stable and can
+   * be used inside collection views without breaking their maintenance.
+   */
+  oclIsKindOf(C: ClassId): boolean {
+    return this.ancestry.includes(C);
   }
 
   /** Read field value directly (internal - consumers use typed accessors). */

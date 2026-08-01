@@ -52,6 +52,8 @@ export class RegisteredClass {
     private oidSource: () => number,
     /** Superclass id, if this class extends another one. */
     public readonly superclass: ClassId | null = null,
+    /** This class and its superclasses, most specific first. */
+    public readonly ancestry: readonly ClassId[] = [classId],
   ) {}
 
   /** Create a new instance of this class. */
@@ -93,7 +95,7 @@ export class RegisteredClass {
       }
       this.store.register(this.classId, oid, fname, val);
     }
-    return new ReactiveObject(this.store, this.classId, oid, collections);
+    return new ReactiveObject(this.store, this.classId, oid, collections, this.ancestry);
   }
 }
 
@@ -126,7 +128,10 @@ export class ReactiveStore {
         `Cannot register "${classId}": superclass "${superclass}" is not registered yet`,
       );
     }
-    const inherited = superclass !== null ? this.classes.get(superclass)!.fields : {};
+    const parent = superclass !== null ? this.classes.get(superclass)! : null;
+    const inherited = parent ? parent.fields : {};
+    // The superclass is registered first, so its ancestry is already known.
+    const ancestry = parent ? [classId, ...parent.ancestry] : [classId];
 
     this.nextOid.set(classId, 1);
     const cls = new RegisteredClass(
@@ -139,6 +144,7 @@ export class ReactiveStore {
         return n;
       },
       superclass,
+      ancestry,
     );
     this.classes.set(classId, cls);
     return cls;
@@ -149,32 +155,19 @@ export class ReactiveStore {
     return this.classes.get(classId);
   }
 
-  /** The class and its superclasses, most specific first. */
-  private chain(classId: ClassId): RegisteredClass[] {
-    const out: RegisteredClass[] = [];
-    let current = this.classes.get(classId);
-    while (current) {
-      out.push(current);
-      current = current.superclass !== null ? this.classes.get(current.superclass) : undefined;
-    }
-    return out;
-  }
-
   /**
    * The registered classes seen as a metamodel, for the type checker and the
    * expression evaluator. `extends` is the reflexive-transitive subclass
-   * relation, so it also drives oclIsKindOf.
+   * relation, so it also drives oclIsKindOf. Inherited fields are merged at
+   * registration time, so neither lookup has to walk the hierarchy here.
    */
   get metaModel(): MetaModel {
     return {
       fieldType: (C, f) => {
-        for (const cls of this.chain(C)) {
-          const def = cls.fields[f];
-          if (def) return fieldDefType(def);
-        }
-        return null;
+        const def = this.classes.get(C)?.fields[f];
+        return def ? fieldDefType(def) : null;
       },
-      extends: (sub, sup) => this.chain(sub).some((cls) => cls.classId === sup),
+      extends: (sub, sup) => this.classes.get(sub)?.ancestry.includes(sup) ?? false,
     };
   }
 
