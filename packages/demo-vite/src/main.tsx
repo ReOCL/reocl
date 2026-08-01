@@ -1,7 +1,8 @@
 import { render } from "preact";
-import { useEffect, useReducer, useState } from "preact/hooks";
-import { effect } from "@preact/signals-core";
-import { type ReactiveSignal } from "reactiveocl";
+import { useState } from "preact/hooks";
+// Binds the signal graph to Preact: a component that reads `.value` while
+// rendering re-renders on its own when that value changes.
+import "@preact/signals";
 
 import { InvariantStatus } from "./shared/InvariantStatus";
 import { SignalValue } from "./shared/SignalValue";
@@ -20,28 +21,12 @@ import { conservation, checkingNonNeg, savingsNonNeg } from "./tabs/transactions
 import { PersonAccountCard } from "./tabs/transactions/components/PersonAccountCard";
 import { PersonAccountActions } from "./tabs/transactions/components/PersonAccountActions";
 
-import {
-  inStock$,
-  itemValues$,
-  totalInventoryValue$,
-  inventoryOk$,
-  inventoryOk,
-} from "./tabs/chaining-pipelines/invariants";
+import { inStock$, totalInventoryValue$, inventoryOk } from "./tabs/chaining-pipelines/invariants";
 import { PIPELINE_PUML } from "./tabs/chaining-pipelines/config";
 import { PipelineCard } from "./tabs/chaining-pipelines/components/PipelineCard";
 import { PipelineActions } from "./tabs/chaining-pipelines/components/PipelineActions";
 
 type Tab = "department" | "personaccount" | "pipeline";
-
-function useReactive(...signals: ReactiveSignal<any>[]): void {
-  const [, force] = useReducer((x: number) => x + 1, 0);
-  useEffect(() => {
-    return effect(() => {
-      for (const s of signals) void s.value;
-      force(0);
-    });
-  }, []);
-}
 
 function CodeToggle({ show, onToggle }: { show: boolean; onToggle: () => void }) {
   return (
@@ -111,23 +96,6 @@ function MetamodelCard({ source }: { source: string }) {
 }
 
 function App() {
-  useReactive(
-    dept.budget$,
-    dept.noUnpaid$,
-    dept.employeeCount$,
-    dept.totalSalaries$,
-    pa.checking$,
-    pa.savings$,
-    pa.conservation$,
-    pa.checkingNonNeg$,
-    pa.savingsNonNeg$,
-    employees$.objects,
-    inStock$.objects,
-    itemValues$.numbers(),
-    totalInventoryValue$,
-    inventoryOk$,
-  );
-
   const [tab, setTab] = useState<Tab>("department");
   const [showCodes, setShowCodes] = useState(false);
   const toggleCodes = () => setShowCodes(!showCodes);

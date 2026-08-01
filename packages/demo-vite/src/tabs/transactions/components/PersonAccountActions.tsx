@@ -1,4 +1,4 @@
-import { useReducer, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import { pa, personAccount, store } from "../model";
 
 const tx = store.transaction(pa.conservation$, pa.checkingNonNeg$, pa.savingsNonNeg$);
@@ -7,7 +7,6 @@ export function PersonAccountActions() {
   const [amount, setAmount] = useState(50);
   const [result, setResult] = useState("");
   const [resultOk, setResultOk] = useState(true);
-  const [, tick] = useReducer((n: number) => n + 1, 0);
 
   const checkWhichFailed = () => {
     const failures: string[] = [];
@@ -31,7 +30,6 @@ export function PersonAccountActions() {
     });
     const failedBefore = checkWhichFailed();
     const ok = tx.commit();
-    tick(0);
     setResult(
       ok
         ? `Transferred €${amount} - all invariants preserved.`
