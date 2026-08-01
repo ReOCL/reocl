@@ -1,5 +1,5 @@
 import { useState } from "preact/hooks";
-import { addProduct } from "../model";
+import { addProduct } from "@/tabs/chaining-pipelines/model";
 
 export function PipelineActions() {
   const [price, setPrice] = useState(200);

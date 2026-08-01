@@ -4,27 +4,27 @@ import { useState } from "preact/hooks";
 // rendering re-renders on its own when that value changes.
 import "@preact/signals";
 
-import { InvariantStatus } from "./shared/InvariantStatus";
-import { SignalValue } from "./shared/SignalValue";
-import { Kroki } from "./shared/Kroki";
-import { EyeOpen, EyeClosed } from "./shared/icons";
+import { InvariantStatus } from "@/shared/InvariantStatus";
+import { SignalValue } from "@/shared/SignalValue";
+import { Kroki } from "@/shared/Kroki";
+import { EyeOpen, EyeClosed } from "@/shared/icons";
 
-import { employees$, fireEmployee, dept } from "./tabs/invariant-checking/model";
-import { DEPT_PUML } from "./tabs/invariant-checking/config";
-import { noUnpaid } from "./tabs/invariant-checking/invariants";
-import { EmployeeTable } from "./tabs/invariant-checking/components/EmployeeTable";
-import { AddEmployeeForm } from "./tabs/invariant-checking/components/AddEmployeeForm";
+import { employees$, fireEmployee, dept } from "@/tabs/invariant-checking/model";
+import { DEPT_PUML } from "@/tabs/invariant-checking/config";
+import { noUnpaid } from "@/tabs/invariant-checking/invariants";
+import { EmployeeTable } from "@/tabs/invariant-checking/components/EmployeeTable";
+import { AddEmployeeForm } from "@/tabs/invariant-checking/components/AddEmployeeForm";
 
-import { pa } from "./tabs/transactions/model";
-import { PA_PUML } from "./tabs/transactions/config";
-import { conservation, checkingNonNeg, savingsNonNeg } from "./tabs/transactions/invariants";
-import { PersonAccountCard } from "./tabs/transactions/components/PersonAccountCard";
-import { PersonAccountActions } from "./tabs/transactions/components/PersonAccountActions";
+import { pa } from "@/tabs/transactions/model";
+import { PA_PUML } from "@/tabs/transactions/config";
+import { conservation, checkingNonNeg, savingsNonNeg } from "@/tabs/transactions/invariants";
+import { PersonAccountCard } from "@/tabs/transactions/components/PersonAccountCard";
+import { PersonAccountActions } from "@/tabs/transactions/components/PersonAccountActions";
 
-import { inStock$, totalInventoryValue$, inventoryOk } from "./tabs/chaining-pipelines/invariants";
-import { PIPELINE_PUML } from "./tabs/chaining-pipelines/config";
-import { PipelineCard } from "./tabs/chaining-pipelines/components/PipelineCard";
-import { PipelineActions } from "./tabs/chaining-pipelines/components/PipelineActions";
+import { inStock$, totalInventoryValue$, inventoryOk } from "@/tabs/chaining-pipelines/invariants";
+import { PIPELINE_PUML } from "@/tabs/chaining-pipelines/config";
+import { PipelineCard } from "@/tabs/chaining-pipelines/components/PipelineCard";
+import { PipelineActions } from "@/tabs/chaining-pipelines/components/PipelineActions";
 
 type Tab = "department" | "personaccount" | "pipeline";
 

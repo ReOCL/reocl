@@ -1,4 +1,4 @@
-import { pa } from "../model";
+import { pa } from "@/tabs/transactions/model";
 
 export function PersonAccountCard() {
   return (

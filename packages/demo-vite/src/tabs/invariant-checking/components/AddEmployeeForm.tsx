@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
-import { addEmployee, nameForIndex } from "../model";
-import { MIN_SALARY } from "../config";
+import { addEmployee, nameForIndex } from "@/tabs/invariant-checking/model";
+import { MIN_SALARY } from "@/tabs/invariant-checking/config";
 
 export function AddEmployeeForm() {
   const [count, setCount] = useState(4);

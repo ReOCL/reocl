@@ -1,7 +1,7 @@
-import { products$, removeProduct } from "../model";
-import { inStock$, itemValues$, totalInventoryValue$ } from "../invariants";
-import { TOTAL_INVENTORY_LIMIT } from "../config";
-import { PackageIcon, TrashIcon } from "../../../shared/icons";
+import { products$, removeProduct } from "@/tabs/chaining-pipelines/model";
+import { inStock$, itemValues$, totalInventoryValue$ } from "@/tabs/chaining-pipelines/invariants";
+import { TOTAL_INVENTORY_LIMIT } from "@/tabs/chaining-pipelines/config";
+import { PackageIcon, TrashIcon } from "@/shared/icons";
 
 function Step({ op }: { op: string }) {
   return <div class="text-center text-secondary py-1">↓ {op}</div>;

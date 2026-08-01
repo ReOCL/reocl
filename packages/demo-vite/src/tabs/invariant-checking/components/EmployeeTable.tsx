@@ -1,6 +1,6 @@
-import { CompiledEmployee } from "../compiled";
-import { MIN_SALARY } from "../config";
-import { GenderIcon, TrashIcon } from "../../../shared/icons";
+import { CompiledEmployee } from "@/tabs/invariant-checking/compiled";
+import { MIN_SALARY } from "@/tabs/invariant-checking/config";
+import { GenderIcon, TrashIcon } from "@/shared/icons";
 
 interface Props {
   items: readonly CompiledEmployee[];

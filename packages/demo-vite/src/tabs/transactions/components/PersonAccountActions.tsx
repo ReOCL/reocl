@@ -1,5 +1,5 @@
 import { useState } from "preact/hooks";
-import { pa, personAccount, store } from "../model";
+import { pa, personAccount, store } from "@/tabs/transactions/model";
 
 const tx = store.transaction(pa.conservation$, pa.checkingNonNeg$, pa.savingsNonNeg$);
 
