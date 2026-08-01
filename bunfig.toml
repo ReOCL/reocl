@@ -1,0 +1,4 @@
+[test]
+# Report coverage for the library sources, not for the test files themselves.
+coverageSkipTestFiles = true
+coverageReporter = ["text"]
