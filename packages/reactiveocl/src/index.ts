@@ -1,10 +1,10 @@
 import { signal as _signal, computed as _computed, effect as _effect } from "./core/signal";
 import type { ReadonlySignal } from "./core/signal";
 
-/** Mutable reactive cell - matches paper's Signal<T>. */
+/** Mutable reactive cell. */
 export const signal = _signal;
 
-/** Derived reactive cell - matches paper's Computed<T>. */
+/** Derived reactive cell. */
 export const computed = _computed;
 
 /** Subscribe to a signal's changes - drives reactive UI updates. */
@@ -14,7 +14,7 @@ export const effect = _effect;
 export type ReactiveSignal<T> = ReadonlySignal<T>;
 
 export { ReactiveStore } from "./api/reactive-store";
-export type { RegisteredClass, FieldDef, FieldDefMap } from "./api/reactive-store";
+export type { RegisteredClass, ClassOptions, FieldDef, FieldDefMap } from "./api/reactive-store";
 
 export { ReactiveObject } from "./api/reactive-object";
 

@@ -1,7 +1,16 @@
 import type { ReadonlySignal } from "@core/signal";
 import { Store } from "@core/store";
 import { Transaction } from "@core/transaction";
-import type { ClassId } from "@core/types";
+import {
+  TBool,
+  TCollection,
+  TInt,
+  TObject,
+  TString,
+  type ClassId,
+  type MetaModel,
+  type OCLType,
+} from "@core/types";
 import { type OCLVal, VFalse, vint, vstring, VTrue } from "@core/values";
 import { TypedReactiveCollection } from "./reactive-collection";
 import { ReactiveObject } from "./reactive-object";
@@ -14,13 +23,35 @@ export type FieldDef =
 
 export type FieldDefMap = Record<string, FieldDef>;
 
+/** Options for registering a class, e.g. its superclass. */
+export interface ClassOptions {
+  /** Superclass id. It must already be registered. */
+  extends?: ClassId;
+}
+
+function fieldDefType(def: FieldDef): OCLType {
+  switch (def.tag) {
+    case "Int":
+      return TInt;
+    case "String":
+      return TString;
+    case "Bool":
+      return TBool;
+    case "Collection":
+      return TCollection(TObject(def.elementClass));
+  }
+}
+
 /** A class registered with the store. */
 export class RegisteredClass {
   constructor(
     public readonly classId: ClassId,
+    /** Own fields plus the ones inherited from the superclass chain. */
     public readonly fields: FieldDefMap,
     private store: Store,
     private oidSource: () => number,
+    /** Superclass id, if this class extends another one. */
+    public readonly superclass: ClassId | null = null,
   ) {}
 
   /** Create a new instance of this class. */
@@ -68,23 +99,47 @@ export class RegisteredClass {
 
 /** High-level store: register metamodel classes, create reactive objects. */
 export class ReactiveStore {
-  private store = new Store();
-  private classes = new Map<ClassId, RegisteredClass>();
-  private nextOid = new Map<ClassId, number>();
+  private readonly store: Store;
+  private readonly classes: Map<ClassId, RegisteredClass>;
+  private readonly nextOid: Map<ClassId, number>;
+
+  constructor() {
+    this.store = new Store();
+    this.classes = new Map();
+    this.nextOid = new Map();
+  }
 
   /** The underlying core store (for Transaction compatibility). */
   get core(): Store {
     return this.store;
   }
 
-  /** Register a metamodel class with its fields. */
-  registerClass(classId: ClassId, fields: FieldDefMap): RegisteredClass {
+  /** Register a metamodel class with its fields, optionally extending another one. */
+  registerClass(
+    classId: ClassId,
+    fields: FieldDefMap,
+    options: ClassOptions = {},
+  ): RegisteredClass {
+    const superclass = options.extends ?? null;
+    if (superclass !== null && !this.classes.has(superclass)) {
+      throw new Error(
+        `Cannot register "${classId}": superclass "${superclass}" is not registered yet`,
+      );
+    }
+    const inherited = superclass !== null ? this.classes.get(superclass)!.fields : {};
+
     this.nextOid.set(classId, 1);
-    const cls = new RegisteredClass(classId, fields, this.store, () => {
-      const n = this.nextOid.get(classId)!;
-      this.nextOid.set(classId, n + 1);
-      return n;
-    });
+    const cls = new RegisteredClass(
+      classId,
+      { ...inherited, ...fields },
+      this.store,
+      () => {
+        const n = this.nextOid.get(classId)!;
+        this.nextOid.set(classId, n + 1);
+        return n;
+      },
+      superclass,
+    );
     this.classes.set(classId, cls);
     return cls;
   }
@@ -92,6 +147,35 @@ export class ReactiveStore {
   /** Get a registered class. */
   getClass(classId: ClassId): RegisteredClass | undefined {
     return this.classes.get(classId);
+  }
+
+  /** The class and its superclasses, most specific first. */
+  private chain(classId: ClassId): RegisteredClass[] {
+    const out: RegisteredClass[] = [];
+    let current = this.classes.get(classId);
+    while (current) {
+      out.push(current);
+      current = current.superclass !== null ? this.classes.get(current.superclass) : undefined;
+    }
+    return out;
+  }
+
+  /**
+   * The registered classes seen as a metamodel, for the type checker and the
+   * expression evaluator. `extends` is the reflexive-transitive subclass
+   * relation, so it also drives oclIsKindOf.
+   */
+  get metaModel(): MetaModel {
+    return {
+      fieldType: (C, f) => {
+        for (const cls of this.chain(C)) {
+          const def = cls.fields[f];
+          if (def) return fieldDefType(def);
+        }
+        return null;
+      },
+      extends: (sub, sup) => this.chain(sub).some((cls) => cls.classId === sup),
+    };
   }
 
   /** Create a Transaction watched by invariant signals. */
