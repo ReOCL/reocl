@@ -5,54 +5,54 @@ import {
   TString,
   TObject,
   TCollection,
-  OCLType_beq,
-  OCLType_compat,
-  OCLType_join,
+  typesEqual,
+  typesCompatible,
+  joinTypes,
   type OCLType,
   type MetaModel,
 } from "@core/types";
 import { typeOf, wellTypedInvariant } from "@core/compiler";
 import type { Expr, Invariant } from "@core/types";
 
-describe("OCLType_beq", () => {
+describe("typesEqual", () => {
   it("reflexive", () => {
-    expect(OCLType_beq(TBool, TBool)).toBe(true);
-    expect(OCLType_beq(TInt, TInt)).toBe(true);
-    expect(OCLType_beq(TString, TString)).toBe(true);
-    expect(OCLType_beq(TObject("C"), TObject("C"))).toBe(true);
-    expect(OCLType_beq(TCollection(TInt), TCollection(TInt))).toBe(true);
+    expect(typesEqual(TBool, TBool)).toBe(true);
+    expect(typesEqual(TInt, TInt)).toBe(true);
+    expect(typesEqual(TString, TString)).toBe(true);
+    expect(typesEqual(TObject("C"), TObject("C"))).toBe(true);
+    expect(typesEqual(TCollection(TInt), TCollection(TInt))).toBe(true);
   });
 
   it("different tags", () => {
-    expect(OCLType_beq(TBool, TInt)).toBe(false);
+    expect(typesEqual(TBool, TInt)).toBe(false);
   });
 
   it("different class names", () => {
-    expect(OCLType_beq(TObject("A"), TObject("B"))).toBe(false);
+    expect(typesEqual(TObject("A"), TObject("B"))).toBe(false);
   });
 
   it("nested collection", () => {
-    expect(OCLType_beq(TCollection(TCollection(TInt)), TCollection(TCollection(TInt)))).toBe(true);
-    expect(OCLType_beq(TCollection(TBool), TCollection(TInt))).toBe(false);
+    expect(typesEqual(TCollection(TCollection(TInt)), TCollection(TCollection(TInt)))).toBe(true);
+    expect(typesEqual(TCollection(TBool), TCollection(TInt))).toBe(false);
   });
 });
 
-describe("OCLType_compat", () => {
+describe("typesCompatible", () => {
   it("same type is compatible", () => {
-    expect(OCLType_compat(TBool, TBool)).toBe(true);
-    expect(OCLType_compat(TInt, TInt)).toBe(true);
+    expect(typesCompatible(TBool, TBool)).toBe(true);
+    expect(typesCompatible(TInt, TInt)).toBe(true);
   });
   it("different types are not compatible", () => {
-    expect(OCLType_compat(TBool, TInt)).toBe(false);
+    expect(typesCompatible(TBool, TInt)).toBe(false);
   });
 });
 
-describe("OCLType_join", () => {
+describe("joinTypes", () => {
   it("returns type when equal", () => {
-    expect(OCLType_join(TBool, TBool)?.tag).toBe("TBool");
+    expect(joinTypes(TBool, TBool)?.tag).toBe("TBool");
   });
   it("returns null when different", () => {
-    expect(OCLType_join(TBool, TInt)).toBeNull();
+    expect(joinTypes(TBool, TInt)).toBeNull();
   });
 });
 

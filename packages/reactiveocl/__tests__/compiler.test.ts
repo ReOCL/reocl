@@ -1,7 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import { compileInvariant, evalExpr, typeOf } from "@core/compiler";
 import { Store } from "@core/store";
-import { TBool, TCollection, TInt, TObject, TString, type Expr, type MetaModel } from "@core/types";
+import {
+  TBool,
+  TCollection,
+  TInt,
+  TObject,
+  TString,
+  type Expr,
+  type Invariant,
+  type MetaModel,
+} from "@core/types";
 import { vcoll, VFalse, vint, vobj, vstring, VTrue } from "@core/values";
 
 const mm: MetaModel = {
@@ -621,7 +630,7 @@ describe("compileInvariant", () => {
   it("returns computed signal that evaluates invariant", () => {
     const s = new Store();
     s.register("X", 1, "val", vint(42));
-    const inv = {
+    const inv: Invariant = {
       context: "X",
       name: "pos",
       body: {
@@ -638,7 +647,7 @@ describe("compileInvariant", () => {
   it("with null tx evaluates correctly", () => {
     const s = new Store();
     s.register("C", 1, "f", vint(42));
-    const inv = {
+    const inv: Invariant = {
       context: "C",
       name: "test",
       body: {

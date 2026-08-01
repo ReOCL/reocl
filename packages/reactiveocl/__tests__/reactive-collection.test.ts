@@ -48,6 +48,31 @@ describe("ReactiveCollection", () => {
       expect(deltas).toEqual(["REMOVE"]);
     });
 
+    it("addAll appends every element and emits one delta each", () => {
+      const c = new ReactiveCollection([vint(1)]);
+      const sz = c.size();
+      const deltas: string[] = [];
+      c.subscribe((d) => deltas.push(d.tag));
+      c.addAll([vint(2), vint(3)]);
+      expect(c.snapshot()).toEqual([vint(1), vint(2), vint(3)]);
+      expect(deltas).toEqual(["ADD", "ADD"]);
+      expect(sz.value).toBe(3);
+      c.addAll([]);
+      expect(sz.value).toBe(3);
+    });
+
+    it("removing a duplicate leaves the other occurrence removable", () => {
+      const c = new ReactiveCollection([vint(7), vint(7), vint(9)]);
+      const sz = c.size();
+      c.remove(vint(7));
+      expect(sz.value).toBe(2);
+      c.remove(vint(7));
+      expect(sz.value).toBe(1);
+      expect(c.snapshot()).toEqual([vint(9)]);
+      c.remove(vint(7));
+      expect(sz.value).toBe(1);
+    });
+
     it("unsubscribe works", () => {
       const c = new ReactiveCollection();
       const deltas: string[] = [];

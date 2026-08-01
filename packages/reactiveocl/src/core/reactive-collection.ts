@@ -1,25 +1,19 @@
 import { batch, computed, signal, type ReadonlySignal, type Signal } from "./signal";
-import type { Delta, DeltaSubscriber } from "./types";
+import type {
+  Delta,
+  DeltaSubscriber,
+  ForAllAggregate,
+  IsUniqueAggregate,
+  MatchingAggregate,
+  SizeAggregate,
+  SumAggregate,
+} from "./types";
 import type { OCLVal } from "./values";
-import { OCLVal_beq } from "./values";
+import { valuesEqual, valKey } from "./values";
 
 type Pred = (v: OCLVal) => boolean | null;
 type Mapper = (v: OCLVal) => OCLVal | null;
-type KeyFn = (v: OCLVal) => number | null;
-
-function vobjKey(v: OCLVal): string | null {
-  if (v.tag !== "VObj") return null;
-  return `${v.classId}:${v.oid}`;
-}
-
-function scanKey(v: OCLVal): string {
-  if (v.tag === "VObj") return `vobj:${v.classId}:${v.oid}`;
-  if (v.tag === "VInt") return `vint:${v.n}`;
-  if (v.tag === "VString") return `vstr:${v.s}`;
-  if (v.tag === "VTrue") return "vbool:true";
-  if (v.tag === "VFalse") return "vbool:false";
-  return `vcoll:${v.vs.length}`;
-}
+type KeyFn = (v: OCLVal) => string | number | null;
 
 export class ReactiveCollection {
   private _values: OCLVal[] = [];
@@ -32,8 +26,7 @@ export class ReactiveCollection {
     if (initial?.length) {
       this._values = initial.slice();
       for (let i = 0; i < this._values.length; i++) {
-        const k = vobjKey(this._values[i]!) ?? scanKey(this._values[i]!);
-        this._index.set(k, i);
+        this._index.set(valKey(this._values[i]!), i);
       }
     }
   }
@@ -59,8 +52,7 @@ export class ReactiveCollection {
 
   add(v: OCLVal): void {
     batch(() => {
-      const k = vobjKey(v) ?? scanKey(v);
-      this._index.set(k, this._values.length);
+      this._index.set(valKey(v), this._values.length);
       this._values.push(v);
       this._version.value++;
 
@@ -74,8 +66,7 @@ export class ReactiveCollection {
     if (vs.length === 0) return;
     batch(() => {
       for (const v of vs) {
-        const k = vobjKey(v) ?? scanKey(v);
-        this._index.set(k, this._values.length);
+        this._index.set(valKey(v), this._values.length);
         this._values.push(v);
       }
       this._version.value++;
@@ -90,31 +81,31 @@ export class ReactiveCollection {
 
   remove(v: OCLVal): void {
     batch(() => {
-      if (v.tag === "VObj") {
-        this._removeVObj(v.classId, v.oid);
-      } else {
+      const idx = this._index.get(valKey(v));
+      if (idx !== undefined) {
+        this._removeAt(idx);
+      } else if (v.tag !== "VObj") {
+        // Objects are always indexed, so a miss means "not a member".
         this._removeByScan(v);
       }
     });
   }
 
-  private _removeVObj(classId: string, oid: number): void {
-    const key = `${classId}:${oid}`;
-    const idx = this._index.get(key);
-    if (idx === undefined) return;
-
+  /** Swap-remove the element at `idx`, keeping the key index consistent. */
+  private _removeAt(idx: number): void {
     const removed = this._values[idx]!;
     const lastIdx = this._values.length - 1;
+
+    // Delete first, so that a duplicate moved into `idx` re-registers its key.
+    this._index.delete(valKey(removed));
 
     if (idx !== lastIdx) {
       const last = this._values[lastIdx]!;
       this._values[idx] = last;
-      const lastKey = vobjKey(last) ?? scanKey(last);
-      this._index.set(lastKey, idx);
+      this._index.set(valKey(last), idx);
     }
 
     this._values.pop();
-    this._index.delete(key);
     this._version.value++;
 
     for (const sub of this.subscribers) {
@@ -123,28 +114,9 @@ export class ReactiveCollection {
   }
 
   private _removeByScan(v: OCLVal): void {
-    const idx = this._values.findIndex((w) => OCLVal_beq(w, v));
+    const idx = this._values.findIndex((w) => valuesEqual(w, v));
     if (idx === -1) return;
-
-    const removed = this._values[idx]!;
-    const lastIdx = this._values.length - 1;
-
-    if (idx !== lastIdx) {
-      const last = this._values[lastIdx]!;
-      this._values[idx] = last;
-      const lastKey = vobjKey(last) ?? scanKey(last);
-      this._index.set(lastKey, idx);
-    }
-
-    this._values.pop();
-
-    const oldKey = vobjKey(removed) ?? scanKey(removed);
-    this._index.delete(oldKey);
-    this._version.value++;
-
-    for (const sub of this.subscribers) {
-      sub({ tag: "REMOVE", val: removed });
-    }
+    this._removeAt(idx);
   }
 
   subscribe(fn: DeltaSubscriber): () => void {
@@ -195,133 +167,136 @@ export class ReactiveCollection {
     return result;
   }
 
+  /** ForAllAggregate: violators are counted, so the result is a zero test. */
   forAll(p: Pred): ReadonlySignal<boolean> {
-    let violatingCount = 0;
+    const agg: ForAllAggregate = { violatingCount: 0 };
     for (const v of this.snapshot()) {
-      const b = p(v);
-      if (b !== true) violatingCount++;
+      if (p(v) !== true) agg.violatingCount++;
     }
-    const violated = signal(violatingCount === 0);
+    const result = signal(agg.violatingCount === 0);
     this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") {
-        const b = p(d.val);
-        if (b !== true) violatingCount++;
-      } else {
-        const b = p(d.val);
-        if (b !== true) violatingCount--;
+      if (p(d.val) !== true) {
+        if (d.tag === "ADD") agg.violatingCount++;
+        else agg.violatingCount--;
       }
-      violated.value = violatingCount === 0;
+      result.value = agg.violatingCount === 0;
     });
-    return violated;
+    return result;
   }
 
+  /** MatchingAggregate: matches are counted, so the result is a positivity test. */
   exists(p: Pred): ReadonlySignal<boolean> {
-    let count = 0;
+    const agg: MatchingAggregate = { matchingCount: 0 };
     for (const v of this.snapshot()) {
-      if (p(v) === true) count++;
+      if (p(v) === true) agg.matchingCount++;
     }
-    const result = signal(count > 0);
+    const result = signal(agg.matchingCount > 0);
     this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") {
-        if (p(d.val) === true) count++;
-      } else {
-        if (p(d.val) === true) count--;
+      if (p(d.val) === true) {
+        if (d.tag === "ADD") agg.matchingCount++;
+        else agg.matchingCount--;
       }
-      result.value = count > 0;
+      result.value = agg.matchingCount > 0;
     });
     return result;
   }
 
+  /** MatchingAggregate: the same count, read back as an equality with one. */
   one(p: Pred): ReadonlySignal<boolean> {
-    let count = 0;
+    const agg: MatchingAggregate = { matchingCount: 0 };
     for (const v of this.snapshot()) {
-      if (p(v) === true) count++;
+      if (p(v) === true) agg.matchingCount++;
     }
-    const result = signal(count === 1);
+    const result = signal(agg.matchingCount === 1);
     this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") {
-        if (p(d.val) === true) count++;
-      } else {
-        if (p(d.val) === true) count--;
+      if (p(d.val) === true) {
+        if (d.tag === "ADD") agg.matchingCount++;
+        else agg.matchingCount--;
       }
-      result.value = count === 1;
+      result.value = agg.matchingCount === 1;
     });
     return result;
   }
 
+  /** SizeAggregate: a counter, also read back by isEmpty and notEmpty. */
   size(): ReadonlySignal<number> {
-    let sz = this._values.length;
-    const result = signal(sz);
+    const agg: SizeAggregate = { size: this._values.length };
+    const result = signal(agg.size);
     this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") sz++;
-      else sz--;
-      result.value = sz;
+      if (d.tag === "ADD") agg.size++;
+      else agg.size--;
+      result.value = agg.size;
     });
     return result;
   }
 
+  /**
+   * Running total: non-integer elements are ignored and the result is always
+   * defined. Incremental maintenance is exact for integer collections, which is
+   * what the typing of sum requires of the source collection.
+   */
   sum(): ReadonlySignal<number> {
-    let total = 0;
+    const agg: SumAggregate = { total: 0 };
     for (const v of this.snapshot()) {
-      if (v.tag === "VInt") total += v.n;
+      if (v.tag === "VInt") agg.total += v.n;
     }
-    const result = signal(total);
+    const result = signal(agg.total);
     this.subscribe((d: Delta) => {
       if (d.val.tag === "VInt") {
-        if (d.tag === "ADD") total += d.val.n;
-        else total -= d.val.n;
+        if (d.tag === "ADD") agg.total += d.val.n;
+        else agg.total -= d.val.n;
       }
-      result.value = total;
+      result.value = agg.total;
     });
     return result;
   }
 
   isEmpty(): ReadonlySignal<boolean> {
-    let sz = this._values.length;
-    const result = signal(sz === 0);
+    const agg: SizeAggregate = { size: this._values.length };
+    const result = signal(agg.size === 0);
     this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") sz++;
-      else sz--;
-      result.value = sz === 0;
+      if (d.tag === "ADD") agg.size++;
+      else agg.size--;
+      result.value = agg.size === 0;
     });
     return result;
   }
 
   notEmpty(): ReadonlySignal<boolean> {
-    let sz = this._values.length;
-    const result = signal(sz > 0);
+    const agg: SizeAggregate = { size: this._values.length };
+    const result = signal(agg.size > 0);
     this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") sz++;
-      else sz--;
-      result.value = sz > 0;
+      if (d.tag === "ADD") agg.size++;
+      else agg.size--;
+      result.value = agg.size > 0;
     });
     return result;
   }
 
+  /** IsUniqueAggregate: per-key occurrence counts, plus the duplicated-key count. */
   isUnique(kf: KeyFn): ReadonlySignal<boolean> {
-    const counts = new Map<number, number>();
-    let duplicates = 0;
+    const agg: IsUniqueAggregate = { counts: new Map(), duplicates: 0 };
     for (const v of this.snapshot()) {
       const key = kf(v);
       if (key === null) continue;
-      const c = counts.get(key) ?? 0;
-      counts.set(key, c + 1);
-      if (c === 1) duplicates++;
+      const c = agg.counts.get(key) ?? 0;
+      agg.counts.set(key, c + 1);
+      if (c === 1) agg.duplicates++;
     }
-    const result = signal(duplicates === 0);
+    const result = signal(agg.duplicates === 0);
     this.subscribe((d: Delta) => {
       const key = kf(d.val);
       if (key === null) return;
-      const c = counts.get(key) ?? 0;
+      const c = agg.counts.get(key) ?? 0;
       if (d.tag === "ADD") {
-        counts.set(key, c + 1);
-        if (c === 1) duplicates++;
+        agg.counts.set(key, c + 1);
+        if (c === 1) agg.duplicates++;
       } else {
-        counts.set(key, c - 1);
-        if (c - 1 === 0) counts.delete(key);
-        if (c === 2) duplicates--;
+        agg.counts.set(key, c - 1);
+        if (c - 1 === 0) agg.counts.delete(key);
+        if (c === 2) agg.duplicates--;
       }
-      result.value = duplicates === 0;
+      result.value = agg.duplicates === 0;
     });
     return result;
   }

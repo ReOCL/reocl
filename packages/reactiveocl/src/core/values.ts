@@ -13,7 +13,7 @@ export const vstring = (s: string): OCLVal => ({ tag: "VString", s });
 export const vobj = (oid: number, classId: string): OCLVal => ({ tag: "VObj", oid, classId });
 export const vcoll = (vs: OCLVal[]): OCLVal => ({ tag: "VColl", vs });
 
-export function OCLVal_beq(a: OCLVal, b: OCLVal): boolean {
+export function valuesEqual(a: OCLVal, b: OCLVal): boolean {
   if (a.tag !== b.tag) return false;
   switch (a.tag) {
     case "VTrue":
@@ -29,7 +29,7 @@ export function OCLVal_beq(a: OCLVal, b: OCLVal): boolean {
       const bs = b as typeof a;
       if (a.vs.length !== bs.vs.length) return false;
       for (let i = 0; i < a.vs.length; i++) {
-        if (!OCLVal_beq(a.vs[i]!, bs.vs[i]!)) return false;
+        if (!valuesEqual(a.vs[i]!, bs.vs[i]!)) return false;
       }
       return true;
     }
@@ -90,6 +90,24 @@ export function boolVal(b: boolean): OCLVal {
   return b ? VTrue : VFalse;
 }
 
+/** Structural key of a value: equal keys mean structurally equal values. */
+export function valKey(v: OCLVal): string {
+  switch (v.tag) {
+    case "VTrue":
+      return "b:1";
+    case "VFalse":
+      return "b:0";
+    case "VInt":
+      return `i:${v.n}`;
+    case "VString":
+      return `s:${JSON.stringify(v.s)}`;
+    case "VObj":
+      return `o:${v.classId}:${v.oid}`;
+    case "VColl":
+      return `c:[${v.vs.map(valKey).join(",")}]`;
+  }
+}
+
 export function oclNot(a: OCLVal): OCLVal | null {
   const ba = expectBool(a);
   if (ba === null) return null;
@@ -135,15 +153,16 @@ export function oclDiv(a: OCLVal, b: OCLVal): OCLVal | null {
   const n = expectInt(a);
   const m = expectInt(b);
   if (n === null || m === null || m === 0) return null;
-  return vint(Math.trunc(n / m));
+  // Integer division rounds towards minus infinity, unlike JavaScript truncation.
+  return vint(Math.floor(n / m));
 }
 
 export function oclEq(a: OCLVal, b: OCLVal): OCLVal {
-  return boolVal(OCLVal_beq(a, b));
+  return boolVal(valuesEqual(a, b));
 }
 
 export function oclNeq(a: OCLVal, b: OCLVal): OCLVal {
-  return boolVal(!OCLVal_beq(a, b));
+  return boolVal(!valuesEqual(a, b));
 }
 
 export function oclLt(a: OCLVal, b: OCLVal): OCLVal | null {

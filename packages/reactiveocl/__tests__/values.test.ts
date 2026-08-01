@@ -7,7 +7,7 @@ import {
   vstring,
   vobj,
   vcoll,
-  OCLVal_beq,
+  valuesEqual,
   boolVal,
   expectBool,
   isVTrue,
@@ -112,11 +112,11 @@ describe("boolVal", () => {
   });
 });
 
-describe("OCLVal_beq", () => {
+describe("valuesEqual", () => {
   it("reflexive", () => {
     fc.assert(
       fc.property(arbOCLVal(), (v) => {
-        expect(OCLVal_beq(v, v)).toBe(true);
+        expect(valuesEqual(v, v)).toBe(true);
       }),
     );
   });
@@ -124,7 +124,7 @@ describe("OCLVal_beq", () => {
   it("symmetric", () => {
     fc.assert(
       fc.property(arbOCLVal(), arbOCLVal(), (a, b) => {
-        expect(OCLVal_beq(a, b)).toBe(OCLVal_beq(b, a));
+        expect(valuesEqual(a, b)).toBe(valuesEqual(b, a));
       }),
     );
   });
@@ -132,7 +132,7 @@ describe("OCLVal_beq", () => {
   it("vint equality matches number equality", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
-        expect(OCLVal_beq(vint(n), vint(m))).toBe(n === m);
+        expect(valuesEqual(vint(n), vint(m))).toBe(n === m);
       }),
     );
   });
@@ -140,7 +140,7 @@ describe("OCLVal_beq", () => {
   it("different tags are never equal", () => {
     fc.assert(
       fc.property(fc.integer(), fc.string(), (n, s) => {
-        expect(OCLVal_beq(vint(n), vstring(s))).toBe(false);
+        expect(valuesEqual(vint(n), vstring(s))).toBe(false);
       }),
     );
   });
@@ -148,8 +148,8 @@ describe("OCLVal_beq", () => {
   it("vobj equality", () => {
     fc.assert(
       fc.property(fc.integer(), fc.string(), (oid, cid) => {
-        expect(OCLVal_beq(vobj(oid, cid), vobj(oid, cid))).toBe(true);
-        expect(OCLVal_beq(vobj(oid, cid), vobj(oid + 1, cid))).toBe(false);
+        expect(valuesEqual(vobj(oid, cid), vobj(oid, cid))).toBe(true);
+        expect(valuesEqual(vobj(oid, cid), vobj(oid + 1, cid))).toBe(false);
       }),
     );
   });
@@ -158,7 +158,7 @@ describe("OCLVal_beq", () => {
     fc.assert(
       fc.property(fc.array(arbVInt), (vs) => {
         // same values -> equal
-        expect(OCLVal_beq(vcoll(vs), vcoll([...vs]))).toBe(true);
+        expect(valuesEqual(vcoll(vs), vcoll([...vs]))).toBe(true);
       }),
     );
   });
@@ -167,7 +167,7 @@ describe("OCLVal_beq", () => {
     fc.assert(
       fc.property(fc.array(arbVInt), (vs) => {
         const longer = [...vs, vint(0)];
-        expect(OCLVal_beq(vcoll(vs), vcoll(longer))).toBe(vs.length === longer.length);
+        expect(valuesEqual(vcoll(vs), vcoll(longer))).toBe(vs.length === longer.length);
       }),
     );
   });
@@ -232,9 +232,14 @@ describe("oclDiv", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer({ min: 1 }), (n, m) => {
         const result = oclDiv(vint(n), vint(m));
-        expect(asVInt(result!)).toBe(Math.trunc(n / m));
+        expect(asVInt(result!)).toBe(Math.floor(n / m));
       }),
     );
+  });
+  it("rounds towards minus infinity, not towards zero", () => {
+    expect(asVInt(oclDiv(vint(-1), vint(2))!)).toBe(-1);
+    expect(asVInt(oclDiv(vint(-7), vint(2))!)).toBe(-4);
+    expect(asVInt(oclDiv(vint(7), vint(2))!)).toBe(3);
   });
   it("division by zero → null", () => {
     expect(oclDiv(vint(5), vint(0))).toBeNull();
@@ -278,11 +283,11 @@ describe("oclLt / oclGt / oclLeq / oclGeq", () => {
 });
 
 describe("oclEq / oclNeq", () => {
-  it("oclEq matches OCLVal_beq", () => {
+  it("oclEq matches valuesEqual", () => {
     fc.assert(
       fc.property(arbOCLVal(), arbOCLVal(), (a, b) => {
-        expect(oclEq(a, b) === VTrue).toBe(OCLVal_beq(a, b));
-        expect(oclEq(a, b) === VFalse).toBe(!OCLVal_beq(a, b));
+        expect(oclEq(a, b) === VTrue).toBe(valuesEqual(a, b));
+        expect(oclEq(a, b) === VFalse).toBe(!valuesEqual(a, b));
       }),
     );
   });
