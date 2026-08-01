@@ -4,7 +4,13 @@ import type { OCLVal } from "./values";
 
 /** A reactive store: maps state identifiers to mutable signals. */
 export class Store {
-  private cells = new Map<StateId, Signal<OCLVal>>();
+  private readonly cells: Map<StateId, Signal<OCLVal>>;
+  private recorder: Heap | null;
+
+  constructor() {
+    this.cells = new Map();
+    this.recorder = null;
+  }
 
   register(C: ClassId, oid: number, f: FieldId, initial: OCLVal): Signal<OCLVal> {
     const sid = fieldStateId(C, oid, f);
@@ -21,9 +27,36 @@ export class Store {
     return this.cells.get(sid);
   }
 
-  /** Write a value to a store cell. Must be inside a batch (transaction). */
+  /** Write a value to a registered store cell, recording its pre-state first. */
   write(sid: StateId, val: OCLVal): void {
-    this.cells.get(sid)!.value = val;
+    const cell = this.cells.get(sid);
+    if (!cell) throw new Error(`Cannot write to unregistered state cell "${sid}"`);
+    this.record(sid, cell);
+    cell.value = val;
+  }
+
+  /**
+   * Start recording pre-state values lazily: the returned heap grows to hold the
+   * value each mutated cell had when the recording started. This captures the
+   * pre-state without copying unmutated locations - an unrecorded location is one
+   * whose current value still is its pre-state value.
+   */
+  beginRecording(): Heap {
+    this.recorder = new Map();
+    return this.recorder;
+  }
+
+  endRecording(): void {
+    this.recorder = null;
+  }
+
+  /** Record the pre-mutation value of a cell, the first time it is written. */
+  private record(sid: StateId, cell: Signal<OCLVal>): void {
+    if (!this.recorder || this.recorder.has(sid)) return;
+    this.recorder.set(
+      sid,
+      untracked(() => cell.value),
+    );
   }
 
   /** Create a snapshot (Heap) of all current store values. */
@@ -52,12 +85,12 @@ export class Store {
 /** A heap / snapshot: maps state identifiers to pre-transaction values. */
 export type Heap = Map<StateId, OCLVal>;
 
-/** Full snapshot: every state id maps to Some(rho(s)) (mirrors semantics.v). */
+/** Full snapshot: every state id maps to its current value. */
 export function fullSnapshot(store: Store): Heap {
   return store.snapshot();
 }
 
-/** restore matches the Coq definition: for each sid in heap, set store; else keep store. */
+/** Restore: for each sid in the heap set the store, otherwise keep the store. */
 export function restore(store: Store, heap: Heap): void {
   store.restore(heap);
 }

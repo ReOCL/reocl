@@ -1,21 +1,26 @@
-// Operates over configurations ⟨ρ, H, I⟩:
-//   ρ = Store (reactive store)
-//   H = Heap (pre-state snapshot)
-//   I = watched invariant signals (Computed<boolean>)
-//
-// Rules: Begin → Mutate* → Commit (Ok or Rollback)
+// A transaction groups mutations of a store, records the pre-state they
+// overwrite, and enforces the watched invariants when it commits: begin, then
+// any number of mutations, then a commit that either keeps the new state or
+// rolls the store back.
 
 import { batch, untracked, type ReadonlySignal } from "./signal";
 import { Store, type Heap } from "./store";
 
-/** Global pre-state heap - set by Transaction.begin(), cleared by commit/rollback.
- *  Invariant signals read @pre values via this heap during commit evaluation. */
-let currentHeap: Heap | null = null;
+/** Global pre-state of the running transaction - set by Transaction.begin(),
+ *  cleared by commit/rollback. Invariant signals read @pre values through it. */
+let currentPre: { heap: Heap; store: Store } | null = null;
 
-/** Read a pre-state value from the active transaction heap - the paper's $pre(sid). */
+/**
+ * Read a pre-state value from the running transaction.
+ *
+ * The heap only records locations that the transaction mutated, so a miss means
+ * the store still holds the pre-transaction value. Reads therefore agree with a
+ * full snapshot taken at transaction begin. Outside a transaction there is no
+ * pre-state, hence undefined.
+ */
 export function $pre(sid: string): ReturnType<Store["read"]> {
-  if (!currentHeap) return undefined;
-  return currentHeap.get(sid);
+  if (!currentPre) return undefined;
+  return currentPre.heap.get(sid) ?? currentPre.store.read(sid);
 }
 
 export class Transaction {
@@ -32,10 +37,19 @@ export class Transaction {
     this.watched.add(inv);
   }
 
-  /** Begin a transaction: snapshot the store, set global heap for @pre reads. */
+  /** The pre-state heap of the running transaction, or null outside one. */
+  get preHeap(): Heap | null {
+    return this.heap;
+  }
+
+  /**
+   * Begin a transaction: start recording pre-state, set global heap for @pre reads.
+   * The heap is filled lazily, as mutations happen; locations that are never
+   * mutated keep their pre-state value in the store itself.
+   */
   begin(): void {
-    this.heap = this.store.snapshot();
-    currentHeap = this.heap;
+    this.heap = this.store.beginRecording();
+    currentPre = { heap: this.heap, store: this.store };
   }
 
   /** Apply mutations inside a batch. */
@@ -57,13 +71,15 @@ export class Transaction {
       return true;
     });
 
+    this.store.endRecording();
+
     if (allValid) {
-      currentHeap = null;
+      currentPre = null;
       this.heap = null;
       return true;
     } else {
       this.store.restore(this.heap);
-      currentHeap = null;
+      currentPre = null;
       this.heap = null;
       return false;
     }
@@ -71,6 +87,7 @@ export class Transaction {
 
   /** Read pre-state value for a store cell during this transaction. */
   $pre(sid: string): ReturnType<Store["read"]> {
-    return this.heap?.get(sid);
+    if (!this.heap) return undefined;
+    return this.heap.get(sid) ?? this.store.read(sid);
   }
 }
