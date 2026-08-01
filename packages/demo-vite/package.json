@@ -7,14 +7,15 @@
     "build": "bunx tsc && bunx vite build"
   },
   "dependencies": {
-    "@preact/signals-core": "1.14.3",
-    "preact": "10.29.3",
+    "@preact/signals": "^2.10.1",
+    "@preact/signals-core": "1.14.4",
+    "preact": "10.29.7",
     "reactiveocl": "workspace:*"
   },
   "devDependencies": {
-    "@preact/preset-vite": "2.10.5",
-    "typescript": "6.0.3",
-    "vite": "8.1.0",
+    "@preact/preset-vite": "2.10.6",
+    "typescript": "7.0.2",
+    "vite": "8.2.0",
     "vite-plugin-singlefile": "2.3.3"
   }
 }
