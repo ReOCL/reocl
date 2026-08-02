@@ -90,7 +90,6 @@ export function boolVal(b: boolean): OCLVal {
   return b ? VTrue : VFalse;
 }
 
-/** Structural key of a value: equal keys mean structurally equal values. */
 export function valKey(v: OCLVal): string {
   switch (v.tag) {
     case "VTrue":
@@ -112,13 +111,6 @@ export function oclNot(a: OCLVal): OCLVal | null {
   const ba = expectBool(a);
   if (ba === null) return null;
   return boolVal(!ba);
-}
-
-export function oclImplies(a: OCLVal, b: OCLVal): OCLVal | null {
-  const ba = expectBool(a);
-  const bb = expectBool(b);
-  if (ba === null || bb === null) return null;
-  return boolVal(!ba || bb);
 }
 
 export function oclXor(a: OCLVal, b: OCLVal): OCLVal | null {

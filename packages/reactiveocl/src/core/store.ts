@@ -2,7 +2,6 @@ import { batch, signal, untracked, type Signal } from "./signal";
 import { fieldStateId, type ClassId, type FieldId, type StateId } from "./types";
 import type { OCLVal } from "./values";
 
-/** A reactive store: maps state identifiers to mutable signals. */
 export class Store {
   private readonly cells: Map<StateId, Signal<OCLVal>>;
   private recorder: Heap | null;
@@ -27,7 +26,6 @@ export class Store {
     return this.cells.get(sid);
   }
 
-  /** Write a value to a registered store cell, recording its pre-state first. */
   write(sid: StateId, val: OCLVal): void {
     const cell = this.cells.get(sid);
     if (!cell) throw new Error(`Cannot write to unregistered state cell "${sid}"`);
@@ -35,12 +33,6 @@ export class Store {
     cell.value = val;
   }
 
-  /**
-   * Start recording pre-state values lazily: the returned heap grows to hold the
-   * value each mutated cell had when the recording started. This captures the
-   * pre-state without copying unmutated locations - an unrecorded location is one
-   * whose current value still is its pre-state value.
-   */
   beginRecording(): Heap {
     this.recorder = new Map();
     return this.recorder;
@@ -50,7 +42,6 @@ export class Store {
     this.recorder = null;
   }
 
-  /** Record the pre-mutation value of a cell, the first time it is written. */
   private record(sid: StateId, cell: Signal<OCLVal>): void {
     if (!this.recorder || this.recorder.has(sid)) return;
     this.recorder.set(
@@ -59,7 +50,6 @@ export class Store {
     );
   }
 
-  /** Create a snapshot (Heap) of all current store values. */
   snapshot(): Heap {
     const h = new Map<StateId, OCLVal>();
     for (const [sid, cell] of this.cells) {
@@ -71,7 +61,6 @@ export class Store {
     return h;
   }
 
-  /** Restore store cells from a heap snapshot. */
   restore(heap: Heap): void {
     batch(() => {
       for (const [sid, val] of heap) {
@@ -82,17 +71,6 @@ export class Store {
   }
 }
 
-/** A heap / snapshot: maps state identifiers to pre-transaction values. */
 export type Heap = Map<StateId, OCLVal>;
-
-/** Full snapshot: every state id maps to its current value. */
-export function fullSnapshot(store: Store): Heap {
-  return store.snapshot();
-}
-
-/** Restore: for each sid in the heap set the store, otherwise keep the store. */
-export function restore(store: Store, heap: Heap): void {
-  store.restore(heap);
-}
 
 export { fieldStateId };

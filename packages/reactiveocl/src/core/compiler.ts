@@ -27,7 +27,6 @@ import {
   oclEq,
   oclGeq,
   oclGt,
-  oclImplies,
   oclLeq,
   oclLt,
   oclMul,
@@ -43,28 +42,10 @@ import {
 } from "./values";
 type ValEnv = Map<string, OCLVal | undefined>;
 
-function oclBinOp(op: BinOp, a: OCLVal, b: OCLVal): OCLVal | null {
+type StrictBinOp = Exclude<BinOp, "and" | "or" | "implies">;
+
+function oclBinOp(op: StrictBinOp, a: OCLVal, b: OCLVal): OCLVal | null {
   switch (op) {
-    case "and": {
-      // short-circuit: VFalse → skip e2
-      const ba = expectBool(a);
-      if (ba === false) return VFalse;
-      if (ba === null) return null;
-      // ba === true
-      const bb = expectBool(b);
-      if (bb === null) return null;
-      return boolVal(bb);
-    }
-    case "or": {
-      const ba = expectBool(a);
-      if (ba === true) return VTrue;
-      if (ba === null) return null;
-      const bb = expectBool(b);
-      if (bb === null) return null;
-      return boolVal(bb);
-    }
-    case "implies":
-      return oclImplies(a, b);
     case "xor":
       return oclXor(a, b);
     case "eq":
@@ -89,8 +70,6 @@ function oclBinOp(op: BinOp, a: OCLVal, b: OCLVal): OCLVal | null {
       return oclDiv(a, b);
   }
 }
-
-// ---- Static type checker ----
 
 function typeBinOp(op: BinOp, t1: OCLType, t2: OCLType): OCLType | null {
   switch (op) {
@@ -163,8 +142,6 @@ export function typeOf(env: Env, e: Expr, mm: MetaModel): OCLType | null {
       const te = typeOf(env, e.e3, mm);
       if (!tg || !typesCompatible(tg, TBool)) return null;
       if (!tt || !te) return null;
-      // Static compatibility is structural equality: inheritance is only
-      // observed dynamically, through oclIsKindOf.
       return joinTypes(tt, te);
     }
     case "ESelect": {
@@ -278,14 +255,12 @@ export function wellTypedInvariant(inv: Invariant, mm: MetaModel): boolean {
   return typeOf(env, inv.body, mm)?.tag === "TBool";
 }
 
-/** Bind an iterator variable without touching the enclosing environment. */
 function bindVar(env: ValEnv, x: string, v: OCLVal): ValEnv {
   const extended: ValEnv = new Map(env);
   extended.set(x, v);
   return extended;
 }
 
-/** Evaluate an expression that must yield a Boolean; null when undefined. */
 function evalBool(
   e: Expr,
   env: ValEnv,
@@ -297,11 +272,6 @@ function evalBool(
   return r === null ? null : expectBool(r);
 }
 
-/**
- * Evaluate an iterator body over every element of a collection, strictly:
- * one undefined or non-Boolean result makes the whole operator undefined.
- * This strict evaluation is shared by select, reject and one.
- */
 function evalIterBools(
   source: Expr,
   x: string,
@@ -324,10 +294,6 @@ function evalIterBools(
   return { vs, bs };
 }
 
-/**
- * Evaluate a ReOCL expression to an OCLVal (or null if undefined).
- * The metamodel is only needed by oclIsKindOf, to resolve the subclass relation.
- */
 export function evalExpr(
   expr: Expr,
   env: ValEnv,
@@ -357,19 +323,26 @@ export function evalExpr(
     case "EPre": {
       const v = evalExpr(expr.e, env, store, heap, mm);
       if (v === null || v.tag !== "VObj") return null;
-      if (heap === null) return null; // no transaction: @pre is undefined
+      if (heap === null) return null;
       const sid = `${v.classId}:${v.oid}:${expr.f}`;
-      // A heap without an entry for sid means sid was never mutated in this
-      // transaction, so the current value still is the pre-state value.
       return heap.get(sid) ?? store.read(sid) ?? null;
     }
     case "EBinOp": {
       const v1 = evalExpr(expr.e1, env, store, heap, mm);
       if (v1 === null) return null;
-      // and, or and implies short-circuit on their left operand.
-      if (expr.op === "and" && expectBool(v1) === false) return VFalse;
-      if (expr.op === "or" && expectBool(v1) === true) return VTrue;
-      if (expr.op === "implies" && expectBool(v1) === false) return VTrue;
+
+      if (expr.op === "and" || expr.op === "or" || expr.op === "implies") {
+        const b1 = expectBool(v1);
+        if (b1 === null) return null;
+        if (expr.op === "and" && !b1) return VFalse;
+        if (expr.op === "or" && b1) return VTrue;
+        if (expr.op === "implies" && !b1) return VTrue;
+        const v2 = evalExpr(expr.e2, env, store, heap, mm);
+        if (v2 === null) return null;
+        const b2 = expectBool(v2);
+        return b2 === null ? null : boolVal(b2);
+      }
+
       const v2 = evalExpr(expr.e2, env, store, heap, mm);
       if (v2 === null) return null;
       return oclBinOp(expr.op, v1, v2);
@@ -408,7 +381,6 @@ export function evalExpr(
       return { tag: "VColl", vs: out };
     }
     case "EForAll": {
-      // Short-circuits on the first false.
       const c = evalExpr(expr.e1, env, store, heap, mm);
       if (c === null) return null;
       const vs = expectColl(c);
@@ -421,7 +393,6 @@ export function evalExpr(
       return VTrue;
     }
     case "EExists": {
-      // Short-circuits on the first true.
       const c = evalExpr(expr.e1, env, store, heap, mm);
       if (c === null) return null;
       const vs = expectColl(c);
@@ -443,7 +414,6 @@ export function evalExpr(
       if (c === null) return null;
       const vs = expectColl(c);
       if (vs === null) return null;
-      // Strict: all keys are computed before duplicates are looked for.
       const keys: string[] = [];
       for (const v of vs) {
         const r = evalExpr(expr.e2, bindVar(env, expr.x, v), store, heap, mm);
@@ -453,7 +423,6 @@ export function evalExpr(
       return boolVal(new Set(keys).size === keys.length);
     }
     case "EAny": {
-      // Returns the first witness.
       const c = evalExpr(expr.e1, env, store, heap, mm);
       if (c === null) return null;
       const vs = expectColl(c);
@@ -498,8 +467,6 @@ export function evalExpr(
     case "EKindOf": {
       const v = evalExpr(expr.e, env, store, heap, mm);
       if (v === null || v.tag !== "VObj") return null;
-      // Kind test follows the reflexive subclass relation of the metamodel.
-      // Without one, only reflexivity is known, which degrades to a type test.
       return boolVal(mm ? mm.extends(v.classId, expr.C) : v.classId === expr.C);
     }
     case "ETypeOf": {
@@ -510,11 +477,6 @@ export function evalExpr(
   }
 }
 
-/**
- * Compile an invariant body into a live reactive signal.
- * Returns a Computed<boolean> that re-evaluates when its dependencies change.
- * With a transaction, @pre reads see the state recorded when it began.
- */
 export function compileInvariant(
   inv: Invariant,
   store: Store,
@@ -527,6 +489,6 @@ export function compileInvariant(
     const env = new Map<string, OCLVal | undefined>();
     env.set("self", { tag: "VObj", oid, classId: inv.context } satisfies OCLVal);
     const result = evalExpr(inv.body, env, store, heap, mm);
-    return result === VTrue;
+    return result !== null && result.tag === "VTrue";
   });
 }
