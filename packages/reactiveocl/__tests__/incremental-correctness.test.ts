@@ -42,7 +42,7 @@ function eagerFromModel(m: Model): boolean {
   return m.emps.every((e) => e.salary >= MIN_SALARY);
 }
 
-describe("TypedReactiveCollection - forAll property-based", () => {
+describe("maintained forAll agrees with a from-scratch scan", () => {
   it("forAll equals eager after arbitrary sequences of ADD and REMOVE", () => {
     fc.assert(
       fc.property(
@@ -50,13 +50,13 @@ describe("TypedReactiveCollection - forAll property-based", () => {
         fc.array(fc.nat({ max: 30 }), { minLength: 1, maxLength: 50 }),
         (initial, seeds) => {
           const ec = empClass();
+          const coll = new TypedReactiveCollection([]);
           const m: Model = {
             emps: [],
-            coll: new TypedReactiveCollection([]),
-            forAll$: null as any,
+            coll,
+            forAll$: coll.forAll((o) => o.int("salary") >= MIN_SALARY),
             ec,
           };
-          m.forAll$ = m.coll.forAll((o) => o.int("salary") >= MIN_SALARY);
 
           for (const s of initial) {
             applyAction(m, { type: "add", salary: s });
@@ -89,13 +89,13 @@ describe("TypedReactiveCollection - forAll property-based", () => {
           fc.pre(goodSalary >= MIN_SALARY);
 
           const ec = empClass();
+          const coll = new TypedReactiveCollection([]);
           const m: Model = {
             emps: [],
-            coll: new TypedReactiveCollection([]),
-            forAll$: null as any,
+            coll,
+            forAll$: coll.forAll((o) => o.int("salary") >= MIN_SALARY),
             ec,
           };
-          m.forAll$ = m.coll.forAll((o) => o.int("salary") >= MIN_SALARY);
 
           applyAction(m, { type: "add", salary: badSalary });
           expect(m.forAll$.value).toBe(false);
@@ -127,13 +127,13 @@ describe("TypedReactiveCollection - forAll property-based", () => {
           fc.pre(badSalary < MIN_SALARY);
 
           const ec = empClass();
+          const coll = new TypedReactiveCollection([]);
           const m: Model = {
             emps: [],
-            coll: new TypedReactiveCollection([]),
-            forAll$: null as any,
+            coll,
+            forAll$: coll.forAll((o) => o.int("salary") >= MIN_SALARY),
             ec,
           };
-          m.forAll$ = m.coll.forAll((o) => o.int("salary") >= MIN_SALARY);
 
           for (const s of goods) {
             applyAction(m, { type: "add", salary: s > 0 ? s + MIN_SALARY : MIN_SALARY + 1 });

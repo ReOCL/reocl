@@ -1,15 +1,15 @@
-import { describe, it, expect } from "bun:test";
-import { Store, fullSnapshot, restore } from "@core/store";
+import { describe, expect, it } from "bun:test";
+import { Store } from "@core/store";
 import { vint, vstring } from "@core/values";
 
-describe("Store", () => {
-  it("registers and reads", () => {
+describe("field cells", () => {
+  it("a registered cell reads back the value it was registered with", () => {
     const s = new Store();
     s.register("C", 1, "f", vint(42));
     expect(s.read("C:1:f")).toEqual(vint(42));
   });
 
-  it("register returns a signal that can be mutated", () => {
+  it("register hands back the signal backing the cell", () => {
     const s = new Store();
     const sig = s.register("C", 1, "x", vint(1));
     expect(sig.value).toEqual(vint(1));
@@ -17,26 +17,28 @@ describe("Store", () => {
     expect(s.read("C:1:x")).toEqual(vint(99));
   });
 
-  it("getSignal returns undefined for unknown", () => {
-    const s = new Store();
-    expect(s.getSignal("nonexistent")).toBeUndefined();
-  });
-
-  it("read returns undefined for unknown", () => {
-    const s = new Store();
-    expect(s.read("nonexistent")).toBeUndefined();
-  });
-
-  it("write sets value", () => {
+  it("writing a cell replaces its value", () => {
     const s = new Store();
     s.register("C", 1, "f", vint(0));
     s.write("C:1:f", vint(10));
     expect(s.read("C:1:f")).toEqual(vint(10));
   });
+
+  it("an unregistered cell reads as undefined rather than throwing", () => {
+    const s = new Store();
+    expect(s.read("nonexistent")).toBeUndefined();
+    expect(s.getSignal("nonexistent")).toBeUndefined();
+  });
+
+  it("writing an unregistered cell fails loudly", () => {
+    const s = new Store();
+    expect(() => s.write("Nope:1:x", vint(1))).toThrow(/unregistered state cell/);
+    expect(s.read("Nope:1:x")).toBeUndefined();
+  });
 });
 
-describe("snapshot and restore", () => {
-  it("snapshot captures all values", () => {
+describe("snapshots", () => {
+  it("a snapshot captures every cell", () => {
     const s = new Store();
     s.register("A", 1, "x", vint(10));
     s.register("A", 1, "y", vstring("hi"));
@@ -45,7 +47,7 @@ describe("snapshot and restore", () => {
     expect(snap.get("A:1:y")).toEqual(vstring("hi"));
   });
 
-  it("restore rewrites store from snapshot", () => {
+  it("restoring a snapshot undoes the writes made since", () => {
     const s = new Store();
     s.register("A", 1, "x", vint(10));
     const snap = s.snapshot();
@@ -55,18 +57,34 @@ describe("snapshot and restore", () => {
     expect(s.read("A:1:x")).toEqual(vint(10));
   });
 
-  it("fullSnapshot is alias for snapshot", () => {
+  it("restoring ignores entries for cells that no longer exist", () => {
     const s = new Store();
-    s.register("A", 1, "x", vint(5));
-    expect(fullSnapshot(s)).toEqual(s.snapshot());
+    s.register("C", 1, "x", vint(1));
+    const snap = s.snapshot();
+    snap.set("Gone:1:x", vint(5));
+    s.write("C:1:x", vint(2));
+    s.restore(snap);
+    expect(s.read("C:1:x")).toEqual(vint(1));
+  });
+});
+
+describe("lazy recording", () => {
+  it("records a cell once, at the value it held when recording began", () => {
+    const s = new Store();
+    s.register("C", 1, "x", vint(1));
+    const heap = s.beginRecording();
+    s.write("C:1:x", vint(10));
+    s.write("C:1:x", vint(20));
+    expect([...heap.entries()]).toEqual([["C:1:x", vint(1)]]);
   });
 
-  it("restore helper is alias", () => {
+  it("stops recording once recording ends", () => {
     const s = new Store();
-    s.register("A", 1, "x", vint(1));
-    const snap = s.snapshot();
-    s.write("A:1:x", vint(2));
-    restore(s, snap);
-    expect(s.read("A:1:x")).toEqual(vint(1));
+    s.register("C", 1, "y", vint(2));
+    const heap = s.beginRecording();
+    s.endRecording();
+    s.write("C:1:y", vint(30));
+    expect(heap.has("C:1:y")).toBe(false);
+    expect(s.getSignal("C:1:y")!.value).toEqual(vint(30));
   });
 });

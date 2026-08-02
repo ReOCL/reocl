@@ -1,491 +1,268 @@
-import { describe, expect, it } from "bun:test";
-import { compileInvariant, evalExpr, typeOf } from "@core/compiler";
+import { describe, expect, it, spyOn } from "bun:test";
+import { compileInvariant, evalExpr } from "@core/compiler";
 import { Store } from "@core/store";
-import {
-  TBool,
-  TCollection,
-  TInt,
-  TObject,
-  TString,
-  type Expr,
-  type Invariant,
-  type MetaModel,
-} from "@core/types";
-import { vcoll, VFalse, vint, vobj, vstring, VTrue } from "@core/values";
-
-const mm: MetaModel = {
-  fieldType(C, f) {
-    if (C === "Person" && f === "name") return TString;
-    if (C === "Person" && f === "age") return TInt;
-    if (C === "Department" && f === "employees") return TCollection(TObject("Employee"));
-    if (C === "Employee" && f === "salary") return TInt;
-    if (C === "X" && f === "a") return TInt;
-    return null;
-  },
-  extends(_sub, _sup) {
-    return false;
-  },
-};
+import type { BinOp, Expr, Invariant } from "@core/types";
+import { vcoll, VFalse, vint, vobj, vstring, VTrue, type OCLVal } from "@core/values";
 
 const store = new Store();
 store.register("Person", 1, "name", vstring("Alice"));
 store.register("Person", 1, "age", vint(30));
 
-describe("evalExpr", () => {
-  const env = new Map();
+type ValEnv = Map<string, OCLVal | undefined>;
 
-  it("literals", () => {
-    expect(evalExpr({ tag: "ETrue" }, env, store, null)).toEqual(VTrue);
-    expect(evalExpr({ tag: "EFalse" }, env, store, null)).toEqual(VFalse);
-    expect(evalExpr({ tag: "EIntLit", n: 42 }, env, store, null)).toEqual(vint(42));
-    expect(evalExpr({ tag: "EStringLit", s: "hi" }, env, store, null)).toEqual(vstring("hi"));
+const evalIn = (e: Expr, env: ValEnv = new Map(), heap: Map<string, OCLVal> | null = null) =>
+  evalExpr(e, env, store, heap);
+
+const int = (n: number): Expr => ({ tag: "EIntLit", n });
+const variable = (x: string): Expr => ({ tag: "EVar", x });
+const bin = (op: BinOp, e1: Expr, e2: Expr): Expr => ({ tag: "EBinOp", op, e1, e2 });
+const self: Expr = { tag: "ESelf" };
+const bound = (x: string, v: OCLVal): ValEnv => new Map([[x, v]]);
+const gt = (n: number): Expr => bin("gt", variable("x"), int(n));
+
+describe("literals and variables", () => {
+  it("a literal evaluates to the value it denotes", () => {
+    expect(evalIn({ tag: "ETrue" })).toEqual(VTrue);
+    expect(evalIn({ tag: "EFalse" })).toEqual(VFalse);
+    expect(evalIn(int(42))).toEqual(vint(42));
+    expect(evalIn({ tag: "EStringLit", s: "hi" })).toEqual(vstring("hi"));
   });
 
-  it("variable lookup", () => {
-    const e = new Map();
-    e.set("x", vint(7));
-    expect(evalExpr({ tag: "EVar", x: "x" }, e, store, null)).toEqual(vint(7));
-    expect(evalExpr({ tag: "EVar", x: "y" }, e, store, null)).toBeNull();
+  it("a bound variable evaluates to its binding, an unbound one is undefined", () => {
+    const env = bound("x", vint(7));
+    expect(evalIn(variable("x"), env)).toEqual(vint(7));
+    expect(evalIn(variable("y"), env)).toBeNull();
   });
 
-  it("ESelf reads from env / null when missing", () => {
-    const e = new Map();
-    e.set("self", vint(42));
-    expect(evalExpr({ tag: "ESelf" }, e, store, null)).toEqual(vint(42));
-    expect(evalExpr({ tag: "ESelf" }, new Map(), store, null)).toBeNull();
+  it("self is undefined unless the environment binds it", () => {
+    expect(evalIn(self, bound("self", vint(42)))).toEqual(vint(42));
+    expect(evalIn(self)).toBeNull();
+  });
+});
+
+describe("navigation", () => {
+  const person = bound("self", vobj(1, "Person"));
+
+  it("reads the field from the store", () => {
+    expect(evalIn({ tag: "ENav", e: self, f: "name" }, person)).toEqual(vstring("Alice"));
   });
 
-  it("navigation reads store", () => {
-    const e = new Map();
-    e.set("self", vobj(1, "Person"));
-    expect(evalExpr({ tag: "ENav", e: { tag: "ESelf" }, f: "name" }, e, store, null)).toEqual(
-      vstring("Alice"),
-    );
+  it("is undefined on a receiver that is not an object", () => {
+    expect(evalIn({ tag: "ENav", e: self, f: "age" }, bound("self", vint(1)))).toBeNull();
   });
 
-  it("ENav on non-object returns null", () => {
-    const e = new Map();
-    e.set("self", vint(1));
-    expect(evalExpr({ tag: "ENav", e: { tag: "ESelf" }, f: "age" }, e, store, null)).toBeNull();
+  it("is undefined for a field the object does not have", () => {
+    expect(evalIn({ tag: "ENav", e: self, f: "nonexistent" }, person)).toBeNull();
   });
 
-  it("ENav with non-existent field returns null", () => {
-    const e = new Map();
-    e.set("self", vobj(1, "Person"));
+  it("pre-state navigation reads the recorded value", () => {
+    const heap = new Map<string, OCLVal>([["Person:1:age", vint(25)]]);
+    expect(evalIn({ tag: "EPre", e: variable("self"), f: "age" }, person, heap)).toEqual(vint(25));
+  });
+
+  it("pre-state navigation is undefined with no transaction", () => {
+    expect(evalIn({ tag: "EPre", e: variable("self"), f: "age" }, person)).toBeNull();
+  });
+
+  it("is undefined when the receiver is itself undefined, rather than crashing", () => {
+    const missing = variable("unbound");
+    expect(evalIn({ tag: "ENav", e: missing, f: "age" })).toBeNull();
+    expect(evalIn({ tag: "EPre", e: missing, f: "age" }, new Map(), new Map())).toBeNull();
+    expect(evalIn({ tag: "EKindOf", e: missing, C: "Person" })).toBeNull();
+    expect(evalIn({ tag: "ETypeOf", e: missing, C: "Person" })).toBeNull();
+  });
+});
+
+describe("arithmetic and comparison", () => {
+  it("computes over integer operands", () => {
+    expect(evalIn(bin("add", int(3), int(4)))).toEqual(vint(7));
+    expect(evalIn(bin("sub", int(10), int(3)))).toEqual(vint(7));
+    expect(evalIn(bin("mul", int(4), int(5)))).toEqual(vint(20));
+    expect(evalIn(bin("div", int(10), int(3)))).toEqual(vint(10 / 3));
+  });
+
+  it("compares integers", () => {
+    expect(evalIn(bin("lt", int(1), int(2)))).toEqual(VTrue);
+    expect(evalIn(bin("gt", int(3), int(2)))).toEqual(VTrue);
+    expect(evalIn(bin("leq", int(2), int(2)))).toEqual(VTrue);
+    expect(evalIn(bin("geq", int(2), int(2)))).toEqual(VTrue);
+  });
+
+  it("decides equality structurally", () => {
+    expect(evalIn(bin("eq", int(5), int(5)))).toEqual(VTrue);
+    expect(evalIn(bin("neq", int(1), int(2)))).toEqual(VTrue);
+    expect(evalIn(bin("neq", int(2), int(1)))).toEqual(VTrue);
+    expect(evalIn(bin("leq", int(2), int(1)))).toEqual(VFalse);
+  });
+
+  it("is undefined when an operand is undefined", () => {
+    expect(evalIn(bin("add", variable("missing"), int(1)))).toBeNull();
+  });
+});
+
+describe("Boolean operators", () => {
+  it("and, or and xor follow their truth tables", () => {
+    expect(evalIn(bin("and", { tag: "ETrue" }, { tag: "ETrue" }))).toEqual(VTrue);
+    expect(evalIn(bin("and", { tag: "ETrue" }, { tag: "EFalse" }))).toEqual(VFalse);
+    expect(evalIn(bin("or", { tag: "EFalse" }, { tag: "ETrue" }))).toEqual(VTrue);
+    expect(evalIn(bin("or", { tag: "EFalse" }, { tag: "EFalse" }))).toEqual(VFalse);
+    expect(evalIn(bin("xor", { tag: "ETrue" }, { tag: "EFalse" }))).toEqual(VTrue);
+    expect(evalIn(bin("implies", { tag: "ETrue" }, { tag: "EFalse" }))).toEqual(VFalse);
+  });
+
+  it("negation inverts a Boolean and is undefined on anything else", () => {
+    expect(evalIn({ tag: "ENot", e: { tag: "ETrue" } })).toEqual(VFalse);
+    expect(evalIn({ tag: "ENot", e: { tag: "EFalse" } })).toEqual(VTrue);
+    expect(evalIn({ tag: "ENot", e: int(1) })).toBeNull();
+  });
+
+  it("a non-Boolean operand makes a connective undefined", () => {
+    expect(evalIn(bin("and", int(1), { tag: "ETrue" }))).toBeNull();
+    expect(evalIn(bin("and", { tag: "ETrue" }, int(1)))).toBeNull();
+    expect(evalIn(bin("or", int(1), { tag: "ETrue" }))).toBeNull();
+  });
+});
+
+describe("conditionals", () => {
+  it("takes the branch the guard selects", () => {
+    expect(evalIn({ tag: "EIf", e1: { tag: "ETrue" }, e2: int(1), e3: int(2) })).toEqual(vint(1));
+    expect(evalIn({ tag: "EIf", e1: { tag: "EFalse" }, e2: int(1), e3: int(2) })).toEqual(vint(2));
+  });
+
+  it("is undefined when the guard is not Boolean", () => {
     expect(
-      evalExpr({ tag: "ENav", e: { tag: "ESelf" }, f: "nonexistent" }, e, store, null),
+      evalIn({ tag: "EIf", e1: int(1), e2: { tag: "ETrue" }, e3: { tag: "EFalse" } }),
     ).toBeNull();
   });
+});
 
-  it("EPre reads value", () => {
-    const heap = new Map<string, any>();
-    heap.set("Person:1:age", vint(25));
-    const e = new Map();
-    e.set("self", vobj(1, "Person"));
-    expect(
-      evalExpr({ tag: "EPre", e: { tag: "EVar", x: "self" }, f: "age" }, e, store, heap),
-    ).toEqual(vint(25));
+describe("collection operators", () => {
+  const over = (ns: number[]) => bound("c", vcoll(ns.map(vint)));
+  const c = variable("c");
+
+  it("forAll and exists quantify over the elements", () => {
+    const forAll: Expr = { tag: "EForAll", e1: c, x: "x", e2: gt(0) };
+    expect(evalIn(forAll, over([1, 2, 3]))).toEqual(VTrue);
+    expect(evalIn(forAll, over([1, 0, 3]))).toEqual(VFalse);
+
+    const exists: Expr = { tag: "EExists", e1: c, x: "x", e2: gt(0) };
+    expect(evalIn(exists, over([0, 0, 5]))).toEqual(VTrue);
+    expect(evalIn(exists, over([0, 0]))).toEqual(VFalse);
   });
 
-  it("EPre with null heap returns null", () => {
-    const e = new Map();
-    e.set("self", vobj(1, "Person"));
-    expect(
-      evalExpr({ tag: "EPre", e: { tag: "EVar", x: "self" }, f: "age" }, e, store, null),
-    ).toBeNull();
+  it("the quantifiers are told apart by how many elements match", () => {
+    const two = over([5, 6, 0]);
+    expect(evalIn({ tag: "EExists", e1: c, x: "x", e2: gt(3) }, two)).toEqual(VTrue);
+    expect(evalIn({ tag: "EOne", e1: c, x: "x", e2: gt(3) }, two)).toEqual(VFalse);
+    expect(evalIn({ tag: "EForAll", e1: c, x: "x", e2: gt(3) }, two)).toEqual(VFalse);
+
+    const none = over([]);
+    expect(evalIn({ tag: "EForAll", e1: c, x: "x", e2: gt(3) }, none)).toEqual(VTrue);
+    expect(evalIn({ tag: "EExists", e1: c, x: "x", e2: gt(3) }, none)).toEqual(VFalse);
+    expect(evalIn({ tag: "EOne", e1: c, x: "x", e2: gt(3) }, none)).toEqual(VFalse);
+    expect(evalIn({ tag: "EAny", e1: c, x: "x", e2: gt(3) }, none)).toBeNull();
   });
 
-  it("arithmetic", () => {
-    const add: Expr = {
-      tag: "EBinOp",
-      op: "add",
-      e1: { tag: "EIntLit", n: 3 },
-      e2: { tag: "EIntLit", n: 4 },
-    };
-    expect(evalExpr(add, env, store, null)).toEqual(vint(7));
+  it("select and reject are told apart by which elements they keep", () => {
+    const src = over([1, 5]);
+    expect(evalIn({ tag: "ESelect", e1: c, x: "x", e2: gt(3) }, src)).toEqual(vcoll([vint(5)]));
+    expect(evalIn({ tag: "EReject", e1: c, x: "x", e2: gt(3) }, src)).toEqual(vcoll([vint(1)]));
   });
 
-  it("sub / mul / div", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "sub", e1: { tag: "EIntLit", n: 10 }, e2: { tag: "EIntLit", n: 3 } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(vint(7));
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "mul", e1: { tag: "EIntLit", n: 4 }, e2: { tag: "EIntLit", n: 5 } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(vint(20));
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "div", e1: { tag: "EIntLit", n: 10 }, e2: { tag: "EIntLit", n: 3 } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(vint(3));
+  it("size and sum are told apart by elements that are not one each", () => {
+    const src = over([10, 20]);
+    expect(evalIn({ tag: "ESize", e: c }, src)).toEqual(vint(2));
+    expect(evalIn({ tag: "ESum", e: c }, src)).toEqual(vint(30));
   });
 
-  it("eq / neq", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "eq", e1: { tag: "EIntLit", n: 5 }, e2: { tag: "EIntLit", n: 5 } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "neq", e1: { tag: "EIntLit", n: 1 }, e2: { tag: "EIntLit", n: 2 } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
+  it("isEmpty and notEmpty are opposites on the same collection", () => {
+    const src = over([1]);
+    expect(evalIn({ tag: "EIsEmpty", e: c }, src)).toEqual(VFalse);
+    expect(evalIn({ tag: "ENotEmpty", e: c }, src)).toEqual(VTrue);
   });
 
-  it("lt / gt / leq / geq", () => {
-    const e = new Map();
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "lt", e1: { tag: "EIntLit", n: 1 }, e2: { tag: "EIntLit", n: 2 } },
-        e,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "gt", e1: { tag: "EIntLit", n: 3 }, e2: { tag: "EIntLit", n: 2 } },
-        e,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "leq", e1: { tag: "EIntLit", n: 2 }, e2: { tag: "EIntLit", n: 2 } },
-        e,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "geq", e1: { tag: "EIntLit", n: 2 }, e2: { tag: "EIntLit", n: 2 } },
-        e,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
+  it("an undefined iterator body makes every strict operator undefined", () => {
+    const src = over([1, 2]);
+    const undefinedBody: Expr = variable("unbound");
+    for (const tag of ["ESelect", "EReject", "ECollect", "EOne", "EIsUnique"] as const) {
+      expect(evalIn({ tag, e1: c, x: "x", e2: undefinedBody }, src)).toBeNull();
+    }
+    for (const tag of ["EForAll", "EExists", "EAny"] as const) {
+      expect(evalIn({ tag, e1: c, x: "x", e2: undefinedBody }, src)).toBeNull();
+    }
   });
 
-  it("xor / implies", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "xor", e1: { tag: "ETrue" }, e2: { tag: "EFalse" } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "implies", e1: { tag: "ETrue" }, e2: { tag: "EFalse" } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VFalse);
+  it("a non-Boolean iterator body makes a quantifier undefined", () => {
+    const src = over([1, 2]);
+    const numericBody: Expr = int(1);
+    for (const tag of ["EForAll", "EExists", "EOne", "ESelect", "EReject", "EAny"] as const) {
+      expect(evalIn({ tag, e1: c, x: "x", e2: numericBody }, src)).toBeNull();
+    }
   });
 
-  it("and short-circuits on false", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "and", e1: { tag: "EFalse" }, e2: { tag: "EIntLit", n: 0 } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VFalse);
+  it("select keeps the matching elements and reject keeps the rest", () => {
+    const select: Expr = { tag: "ESelect", e1: c, x: "x", e2: gt(2) };
+    expect(evalIn(select, over([1, 2, 3, 4]))).toEqual(vcoll([vint(3), vint(4)]));
+
+    const reject: Expr = { tag: "EReject", e1: c, x: "x", e2: bin("lt", variable("x"), int(3)) };
+    expect(evalIn(reject, over([1, 2, 3, 4]))).toEqual(vcoll([vint(3), vint(4)]));
   });
 
-  it("and with both bools", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "and", e1: { tag: "ETrue" }, e2: { tag: "ETrue" } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "and", e1: { tag: "ETrue" }, e2: { tag: "EFalse" } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VFalse);
-  });
-
-  it("and with non-bool returns null", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "and", e1: { tag: "EIntLit", n: 1 }, e2: { tag: "ETrue" } },
-        env,
-        store,
-        null,
-      ),
-    ).toBeNull();
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "and", e1: { tag: "ETrue" }, e2: { tag: "EIntLit", n: 1 } },
-        env,
-        store,
-        null,
-      ),
-    ).toBeNull();
-  });
-
-  it("or short-circuits on true", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "or", e1: { tag: "ETrue" }, e2: { tag: "EIntLit", n: 0 } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
-  });
-
-  it("or both bools", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "or", e1: { tag: "EFalse" }, e2: { tag: "ETrue" } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VTrue);
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "or", e1: { tag: "EFalse" }, e2: { tag: "EFalse" } },
-        env,
-        store,
-        null,
-      ),
-    ).toEqual(VFalse);
-  });
-
-  it("or with non-bool returns null", () => {
-    expect(
-      evalExpr(
-        { tag: "EBinOp", op: "or", e1: { tag: "EIntLit", n: 1 }, e2: { tag: "ETrue" } },
-        env,
-        store,
-        null,
-      ),
-    ).toBeNull();
-  });
-
-  it("binop with null operands returns null", () => {
-    expect(
-      evalExpr(
-        {
-          tag: "EBinOp",
-          op: "add",
-          e1: { tag: "EVar", x: "missing" },
-          e2: { tag: "EIntLit", n: 1 },
-        },
-        env,
-        store,
-        null,
-      ),
-    ).toBeNull();
-  });
-
-  it("not", () => {
-    expect(evalExpr({ tag: "ENot", e: { tag: "ETrue" } }, env, store, null)).toEqual(VFalse);
-    expect(evalExpr({ tag: "ENot", e: { tag: "EFalse" } }, env, store, null)).toEqual(VTrue);
-    expect(evalExpr({ tag: "ENot", e: { tag: "EIntLit", n: 1 } }, env, store, null)).toBeNull();
-  });
-
-  it("if-then-else", () => {
-    const e: Expr = {
-      tag: "EIf",
-      e1: { tag: "ETrue" },
-      e2: { tag: "EIntLit", n: 1 },
-      e3: { tag: "EIntLit", n: 2 },
-    };
-    expect(evalExpr(e, env, store, null)).toEqual(vint(1));
-    const e2: Expr = {
-      tag: "EIf",
-      e1: { tag: "EFalse" },
-      e2: { tag: "EIntLit", n: 1 },
-      e3: { tag: "EIntLit", n: 2 },
-    };
-    expect(evalExpr(e2, env, store, null)).toEqual(vint(2));
-  });
-
-  it("EIf with non-bool guard returns null", () => {
-    const e: Expr = {
-      tag: "EIf",
-      e1: { tag: "EIntLit", n: 1 },
-      e2: { tag: "ETrue" },
-      e3: { tag: "EFalse" },
-    };
-    expect(evalExpr(e, env, store, null)).toBeNull();
-  });
-
-  it("forAll / exists on int collection", () => {
-    const e = new Map();
-    e.set("self", vcoll([vint(1), vint(2), vint(3)]));
-    const fa: Expr = {
-      tag: "EForAll",
-      e1: { tag: "ESelf" },
-      x: "x",
-      e2: { tag: "EBinOp", op: "gt", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 0 } },
-    };
-    expect(evalExpr(fa, e, store, null)).toEqual(VTrue);
-    const ex: Expr = {
-      tag: "EExists",
-      e1: { tag: "ESelf" },
-      x: "x",
-      e2: { tag: "EBinOp", op: "gt", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 0 } },
-    };
-    e.set("self", vcoll([vint(0), vint(0), vint(5)]));
-    expect(evalExpr(ex, e, store, null)).toEqual(VTrue);
-  });
-
-  it("select / reject filters", () => {
-    const e = new Map();
-    e.set("c", vcoll([vint(1), vint(2), vint(3), vint(4)]));
-    const sel: Expr = {
-      tag: "ESelect",
-      e1: { tag: "EVar", x: "c" },
-      x: "x",
-      e2: { tag: "EBinOp", op: "gt", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 2 } },
-    };
-    const r = evalExpr(sel, e, store, null);
-    expect(r?.tag).toBe("VColl");
-    if (r && r.tag === "VColl") expect(r.vs.length).toBe(2);
-    const rej: Expr = {
-      tag: "EReject",
-      e1: { tag: "EVar", x: "c" },
-      x: "x",
-      e2: { tag: "EBinOp", op: "lt", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 3 } },
-    };
-    const r2 = evalExpr(rej, e, store, null);
-    expect(r2?.tag).toBe("VColl");
-    if (r2 && r2.tag === "VColl") expect(r2.vs.length).toBe(2);
-  });
-
-  it("collect", () => {
-    const e = new Map();
-    e.set("c", vcoll([vint(1), vint(2)]));
-    const c: Expr = {
+  it("collect maps every element through its body", () => {
+    const collect: Expr = {
       tag: "ECollect",
-      e1: { tag: "EVar", x: "c" },
+      e1: c,
       x: "x",
-      e2: { tag: "EBinOp", op: "mul", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 10 } },
+      e2: bin("mul", variable("x"), int(10)),
     };
-    expect(evalExpr(c, e, store, null)).toEqual(vcoll([vint(10), vint(20)]));
+    expect(evalIn(collect, over([1, 2]))).toEqual(vcoll([vint(10), vint(20)]));
   });
 
-  it("one / isUnique / any", () => {
-    const e = new Map();
-    e.set("c", vcoll([vint(1), vint(5), vint(2)]));
-    const one: Expr = {
-      tag: "EOne",
-      e1: { tag: "EVar", x: "c" },
-      x: "x",
-      e2: { tag: "EBinOp", op: "gt", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 3 } },
-    };
-    expect(evalExpr(one, e, store, null)).toEqual(VTrue);
-    const anyE: Expr = {
-      tag: "EAny",
-      e1: { tag: "EVar", x: "c" },
-      x: "x",
-      e2: { tag: "EBinOp", op: "gt", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 3 } },
-    };
-    expect(evalExpr(anyE, e, store, null)).toEqual(vint(5));
+  it("one holds for exactly one match", () => {
+    const one: Expr = { tag: "EOne", e1: c, x: "x", e2: gt(3) };
+    expect(evalIn(one, over([1, 5, 2]))).toEqual(VTrue);
+    expect(evalIn(one, over([1, 5, 9]))).toEqual(VFalse);
   });
 
-  it("any returns null when none match", () => {
-    const e = new Map();
-    e.set("c", vcoll([vint(1), vint(2)]));
-    const a: Expr = {
-      tag: "EAny",
-      e1: { tag: "EVar", x: "c" },
-      x: "x",
-      e2: { tag: "EBinOp", op: "gt", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 100 } },
-    };
-    expect(evalExpr(a, e, store, null)).toBeNull();
-  });
-
-  it("size / sum / isEmpty / notEmpty", () => {
-    const e = new Map();
-    e.set("c", vcoll([vint(1), vint(2), vint(3)]));
-    expect(evalExpr({ tag: "ESize", e: { tag: "EVar", x: "c" } }, e, store, null)).toEqual(vint(3));
-    e.set("c", vcoll([vint(10), vint(20), vint(30)]));
-    expect(evalExpr({ tag: "ESum", e: { tag: "EVar", x: "c" } }, e, store, null)).toEqual(vint(60));
-    e.set("c", vcoll([]));
-    expect(evalExpr({ tag: "EIsEmpty", e: { tag: "EVar", x: "c" } }, e, store, null)).toEqual(
-      VTrue,
-    );
-    expect(evalExpr({ tag: "ENotEmpty", e: { tag: "EVar", x: "c" } }, e, store, null)).toEqual(
-      VFalse,
-    );
-    e.set("c", vcoll([vint(1)]));
-    expect(evalExpr({ tag: "EIsEmpty", e: { tag: "EVar", x: "c" } }, e, store, null)).toEqual(
-      VFalse,
-    );
-    expect(evalExpr({ tag: "ENotEmpty", e: { tag: "EVar", x: "c" } }, e, store, null)).toEqual(
-      VTrue,
-    );
-  });
-
-  it("EKindOf / ETypeOf", () => {
-    const e = new Map();
-    e.set("self", vobj(1, "Person"));
-    expect(evalExpr({ tag: "EKindOf", e: { tag: "ESelf" }, C: "Person" }, e, store, null)).toEqual(
-      VTrue,
-    );
-    expect(evalExpr({ tag: "EKindOf", e: { tag: "ESelf" }, C: "Other" }, e, store, null)).toEqual(
-      VFalse,
-    );
-    expect(evalExpr({ tag: "ETypeOf", e: { tag: "ESelf" }, C: "Person" }, e, store, null)).toEqual(
-      VTrue,
-    );
-    expect(
-      evalExpr({ tag: "ETypeOf", e: { tag: "ESelf" }, C: "Employee" }, e, store, null),
-    ).toEqual(VFalse);
-  });
-
-  it("EIsUnique returns VTrue on unique collection", () => {
-    const e = new Map();
-    e.set("c", vcoll([vint(1), vint(2), vint(3)]));
-    const expr: Expr = {
+  it("isUnique compares the keys the body produces", () => {
+    const unique: Expr = {
       tag: "EIsUnique",
-      e1: { tag: "EVar", x: "c" },
+      e1: c,
       x: "x",
-      e2: { tag: "EBinOp", op: "mul", e1: { tag: "EVar", x: "x" }, e2: { tag: "EIntLit", n: 2 } },
+      e2: bin("mul", variable("x"), int(2)),
     };
-    expect(evalExpr(expr, e, store, null)).toEqual(VTrue);
+    expect(evalIn(unique, over([1, 2, 3]))).toEqual(VTrue);
+    expect(evalIn(unique, over([1, 2, 1]))).toEqual(VFalse);
   });
 
-  it("collection operators on non-collection return null", () => {
-    const e = new Map();
-    e.set("c", vint(1));
-    const ops = [
+  it("any returns a witness, and is undefined when there is none", () => {
+    const any = (limit: number): Expr => ({ tag: "EAny", e1: c, x: "x", e2: gt(limit) });
+    expect(evalIn(any(3), over([1, 5, 2]))).toEqual(vint(5));
+    expect(evalIn(any(100), over([1, 2]))).toBeNull();
+  });
+
+  it("size counts, sum totals, and the emptiness tests answer", () => {
+    expect(evalIn({ tag: "ESize", e: c }, over([1, 2, 3]))).toEqual(vint(3));
+    expect(evalIn({ tag: "ESum", e: c }, over([10, 20, 30]))).toEqual(vint(60));
+
+    expect(evalIn({ tag: "EIsEmpty", e: c }, over([]))).toEqual(VTrue);
+    expect(evalIn({ tag: "ENotEmpty", e: c }, over([]))).toEqual(VFalse);
+    expect(evalIn({ tag: "EIsEmpty", e: c }, over([1]))).toEqual(VFalse);
+    expect(evalIn({ tag: "ENotEmpty", e: c }, over([1]))).toEqual(VTrue);
+  });
+
+  it("sum is undefined over a non-integer element", () => {
+    expect(evalIn({ tag: "ESum", e: c }, bound("c", vcoll([VTrue])))).toBeNull();
+  });
+
+  it("an undefined body makes a strict operator undefined", () => {
+    const collect: Expr = { tag: "ECollect", e1: c, x: "x", e2: variable("nonexistent") };
+    expect(evalIn(collect, over([1]))).toBeNull();
+  });
+
+  it("every collection operator is undefined over a non-collection", () => {
+    const env = bound("c", vint(1));
+    for (const tag of [
       "ESelect",
       "EReject",
       "ECollect",
@@ -494,170 +271,113 @@ describe("evalExpr", () => {
       "EOne",
       "EIsUnique",
       "EAny",
-    ];
-    for (const op of ops) {
-      const expr: Expr = {
-        tag: op as any,
-        e1: { tag: "EVar", x: "c" },
-        x: "x",
-        e2: { tag: "ETrue" },
-      };
-      expect(evalExpr(expr, e, store, null)).toBeNull();
+    ] as const) {
+      expect(evalIn({ tag, e1: c, x: "x", e2: { tag: "ETrue" } }, env)).toBeNull();
     }
-    expect(evalExpr({ tag: "ESize", e: { tag: "EVar", x: "c" } }, e, store, null)).toBeNull();
-    expect(evalExpr({ tag: "ESum", e: { tag: "EVar", x: "c" } }, e, store, null)).toBeNull();
-    expect(evalExpr({ tag: "EIsEmpty", e: { tag: "EVar", x: "c" } }, e, store, null)).toBeNull();
-    expect(evalExpr({ tag: "ENotEmpty", e: { tag: "EVar", x: "c" } }, e, store, null)).toBeNull();
-    expect(
-      evalExpr({ tag: "EKindOf", e: { tag: "EVar", x: "c" }, C: "X" }, e, store, null),
-    ).toBeNull();
-    expect(
-      evalExpr({ tag: "ETypeOf", e: { tag: "EVar", x: "c" }, C: "X" }, e, store, null),
-    ).toBeNull();
-  });
-
-  it("ESum on non-int collection fails", () => {
-    const e = new Map();
-    e.set("c", vcoll([VTrue]));
-    expect(evalExpr({ tag: "ESum", e: { tag: "EVar", x: "c" } }, e, store, null)).toBeNull();
-  });
-
-  it("collect with null predicate returns null", () => {
-    const e = new Map();
-    e.set("c", vcoll([vint(1)]));
-    const c: Expr = {
-      tag: "ECollect",
-      e1: { tag: "EVar", x: "c" },
-      x: "x",
-      e2: { tag: "EVar", x: "nonexistent" },
-    };
-    expect(evalExpr(c, e, store, null)).toBeNull();
-  });
-});
-
-describe("typeOf", () => {
-  it("boolean binary ops", () => {
-    const e = new Map<string, any>();
-    e.set("a", TBool);
-    e.set("b", TBool);
-    const ops = ["and", "or", "implies", "xor"];
-    for (const op of ops) {
-      const expr: Expr = {
-        tag: "EBinOp",
-        op: op as any,
-        e1: { tag: "EVar", x: "a" },
-        e2: { tag: "EVar", x: "b" },
-      };
-      expect(typeOf(e, expr, mm)?.tag).toBe("TBool");
+    for (const tag of ["ESize", "ESum", "EIsEmpty", "ENotEmpty"] as const) {
+      expect(evalIn({ tag, e: c }, env)).toBeNull();
     }
   });
 
-  it("EBinOp eq/neq", () => {
-    const e = new Map<string, any>();
-    e.set("a", TInt);
-    e.set("b", TInt);
-    expect(
-      typeOf(
-        e,
-        { tag: "EBinOp", op: "eq", e1: { tag: "EVar", x: "a" }, e2: { tag: "EVar", x: "b" } },
-        mm,
-      )?.tag,
-    ).toBe("TBool");
-    expect(
-      typeOf(
-        e,
-        { tag: "EBinOp", op: "neq", e1: { tag: "EVar", x: "a" }, e2: { tag: "EVar", x: "b" } },
-        mm,
-      )?.tag,
-    ).toBe("TBool");
+  it("every collection operator is undefined over an undefined source", () => {
+    const missing = variable("unbound");
+    for (const tag of [
+      "ESelect",
+      "EReject",
+      "ECollect",
+      "EForAll",
+      "EExists",
+      "EOne",
+      "EIsUnique",
+      "EAny",
+    ] as const) {
+      expect(evalIn({ tag, e1: missing, x: "x", e2: { tag: "ETrue" } })).toBeNull();
+    }
+    for (const tag of ["ESize", "ESum", "EIsEmpty", "ENotEmpty"] as const) {
+      expect(evalIn({ tag, e: missing })).toBeNull();
+    }
   });
 
-  it("EBinOp with mismatched types returns null", () => {
-    const e = new Map<string, any>();
-    e.set("a", TInt);
-    e.set("b", TBool);
-    expect(
-      typeOf(
-        e,
-        { tag: "EBinOp", op: "eq", e1: { tag: "EVar", x: "a" }, e2: { tag: "EVar", x: "b" } },
-        mm,
-      ),
-    ).toBeNull();
-  });
-
-  it("EPre / EReject / ECollect / EExists / EOne / EIsUnique / EAny / EIsEmpty / ENotEmpty / EKindOf / ETypeOf", () => {
-    const e = new Map<string, any>();
-    e.set("self", TObject("Department"));
-    expect(
-      typeOf(
-        e,
-        {
-          tag: "EReject",
-          e1: { tag: "ENav", e: { tag: "ESelf" }, f: "employees" },
-          x: "e",
-          e2: { tag: "ETrue" },
-        },
-        mm,
-      )?.tag,
-    ).toBe("TCollection");
-    expect(
-      typeOf(
-        e,
-        {
-          tag: "ECollect",
-          e1: { tag: "ENav", e: { tag: "ESelf" }, f: "employees" },
-          x: "e",
-          e2: { tag: "ENav", e: { tag: "EVar", x: "e" }, f: "salary" },
-        },
-        mm,
-      )?.tag,
-    ).toBe("TCollection");
-    expect(
-      typeOf(e, { tag: "EPre", e: { tag: "ESelf" }, f: "salary" }, {
-        ...mm,
-        fieldType(C: string, _f: string) {
-          return C === "Department" ? TObject("Employee") : TInt;
-        },
-        extends() {
-          return false;
-        },
-      } as any)?.tag,
-    ).not.toBeNull();
+  it("any is undefined when the body is undefined on an earlier element", () => {
+    const body: Expr = {
+      tag: "EIf",
+      e1: bin("eq", variable("x"), int(1)),
+      e2: variable("unbound"),
+      e3: { tag: "ETrue" },
+    };
+    const any: Expr = { tag: "EAny", e1: c, x: "x", e2: body };
+    expect(evalIn(any, over([1, 2]))).toBeNull();
   });
 });
 
-describe("compileInvariant", () => {
-  it("returns computed signal that evaluates invariant", () => {
-    const s = new Store();
-    s.register("X", 1, "val", vint(42));
-    const inv: Invariant = {
-      context: "X",
-      name: "pos",
-      body: {
-        tag: "EBinOp" as const,
-        op: "gt" as const,
-        e1: { tag: "ENav" as const, e: { tag: "ESelf" as const }, f: "val" },
-        e2: { tag: "EIntLit" as const, n: 0 },
-      },
-    };
-    const sig = compileInvariant(inv, s, 1);
-    expect(sig.value).toBe(true);
+describe("type tests", () => {
+  const person = bound("self", vobj(1, "Person"));
+
+  it("answer for the object's own class", () => {
+    expect(evalIn({ tag: "EKindOf", e: self, C: "Person" }, person)).toEqual(VTrue);
+    expect(evalIn({ tag: "EKindOf", e: self, C: "Other" }, person)).toEqual(VFalse);
+    expect(evalIn({ tag: "ETypeOf", e: self, C: "Person" }, person)).toEqual(VTrue);
+    expect(evalIn({ tag: "ETypeOf", e: self, C: "Employee" }, person)).toEqual(VFalse);
   });
 
-  it("with null tx evaluates correctly", () => {
+  it("are undefined on a receiver that is not an object", () => {
+    const env = bound("c", vint(1));
+    expect(evalIn({ tag: "EKindOf", e: variable("c"), C: "X" }, env)).toBeNull();
+    expect(evalIn({ tag: "ETypeOf", e: variable("c"), C: "X" }, env)).toBeNull();
+  });
+});
+
+describe("compiling an invariant to a signal", () => {
+  function positiveField(field: string) {
     const s = new Store();
-    s.register("C", 1, "f", vint(42));
+    s.register("C", 1, field, vint(42));
     const inv: Invariant = {
       context: "C",
-      name: "test",
-      body: {
-        tag: "EBinOp" as const,
-        op: "gt" as const,
-        e1: { tag: "ENav" as const, e: { tag: "ESelf" as const }, f: "f" },
-        e2: { tag: "EIntLit" as const, n: 0 },
-      },
+      name: "positive",
+      body: bin("gt", { tag: "ENav", e: self, f: field }, int(0)),
     };
-    const sig = compileInvariant(inv, s, 1, null);
-    expect(sig.value).toBe(true);
+    return { s, inv };
+  }
+
+  it("the signal reports whether the body holds", () => {
+    const { s, inv } = positiveField("val");
+    expect(compileInvariant(inv, s, 1).value).toBe(true);
+  });
+
+  it("an explicitly absent transaction behaves like none at all", () => {
+    const { s, inv } = positiveField("f");
+    expect(compileInvariant(inv, s, 1, null).value).toBe(true);
+  });
+
+  it("the signal follows later writes to the fields it reads", () => {
+    const { s, inv } = positiveField("val");
+    const holds = compileInvariant(inv, s, 1);
+    expect(holds.value).toBe(true);
+
+    s.write("C:1:val", vint(-1));
+    expect(holds.value).toBe(false);
+
+    s.write("C:1:val", vint(1));
+    expect(holds.value).toBe(true);
+  });
+});
+
+describe("undefined inputs", () => {
+  it("negation is undefined when its operand is undefined", () => {
+    expect(evalIn({ tag: "ENot", e: variable("unbound") })).toBeNull();
+  });
+
+  it("a conditional is undefined when its guard is undefined", () => {
+    expect(evalIn({ tag: "EIf", e1: variable("unbound"), e2: int(1), e3: int(2) })).toBeNull();
+  });
+
+  it("navigation never touches the store for a receiver of the wrong kind", () => {
+    const s = new Store();
+    const spy = spyOn(s, "read");
+    const env = bound("self", vint(1));
+    expect(evalExpr({ tag: "ENav", e: self, f: "age" }, env, s, null)).toBeNull();
+    expect(evalExpr({ tag: "EPre", e: self, f: "age" }, env, s, new Map())).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

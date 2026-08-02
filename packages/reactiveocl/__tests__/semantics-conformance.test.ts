@@ -1,7 +1,3 @@
-/**
- * Conformance of the runtime with the option-valued semantics of ReOCL:
- * undefinedness, short-circuiting, structural equality and pre-state reads.
- */
 import { describe, expect, it } from "bun:test";
 import { compileInvariant, evalExpr, typeOf } from "@core/compiler";
 import { Store } from "@core/store";
@@ -11,13 +7,11 @@ import { vcoll, VFalse, vint, vobj, vstring, VTrue } from "@core/values";
 import { ReactiveStore } from "@api/reactive-store";
 import { TypedReactiveCollection } from "@api/reactive-collection";
 
-/** Metamodel with Manager <= Employee. */
 const hierarchy: MetaModel = {
   fieldType(C, f) {
     if (f === "salary" && (C === "Employee" || C === "Manager")) return TInt;
     return null;
   },
-  // The subclass relation is reflexive and transitive.
   extends(sub, sup) {
     if (sub === sup) return true;
     return sub === "Manager" && sup === "Employee";
@@ -146,7 +140,7 @@ describe("ReactiveStore exposes the class hierarchy as a MetaModel", () => {
 
 describe("iterator bodies are option-valued", () => {
   const env = new Map([["c", vcoll([vint(1), vint(2)])]]);
-  const nonBoolBody: Expr = { tag: "EVar", x: "x" }; // an Int, not a Boolean
+  const nonBoolBody: Expr = { tag: "EVar", x: "x" };
 
   for (const tag of ["ESelect", "EReject", "EForAll", "EExists", "EOne", "EAny"] as const) {
     it(`${tag} is undefined when the body is not Boolean`, () => {
@@ -215,7 +209,6 @@ describe("isUnique is strict and compares values structurally", () => {
   });
 
   it("an undefined key after a duplicate still makes the result undefined", () => {
-    // Every key is evaluated before duplicates are looked for.
     const env = new Map([["c", vcoll([vint(1), vint(1), vint(0)])]]);
     const expr: Expr = {
       tag: "EIsUnique",
@@ -227,30 +220,97 @@ describe("isUnique is strict and compares values structurally", () => {
   });
 });
 
-describe("implies short-circuits on a false left operand", () => {
-  it("a false antecedent hides an undefined consequent", () => {
-    const expr: Expr = {
-      tag: "EBinOp",
-      op: "implies",
-      e1: { tag: "EFalse" },
-      e2: { tag: "EBinOp", op: "div", e1: { tag: "EIntLit", n: 1 }, e2: { tag: "EIntLit", n: 0 } },
-    };
+describe("the connectives are decided by their left operand", () => {
+  const undefinedOperand: Expr = {
+    tag: "EBinOp",
+    op: "div",
+    e1: { tag: "EIntLit", n: 1 },
+    e2: { tag: "EIntLit", n: 0 },
+  };
+  const connective = (op: "and" | "or" | "implies", e1: Expr, e2: Expr): Expr => ({
+    tag: "EBinOp",
+    op,
+    e1,
+    e2,
+  });
+
+  it("a false conjunct hides an undefined second operand", () => {
+    const expr = connective("and", { tag: "EFalse" }, undefinedOperand);
+    expect(evalExpr(expr, new Map(), store, null)).toEqual(VFalse);
+  });
+
+  it("a true disjunct hides an undefined second operand", () => {
+    const expr = connective("or", { tag: "ETrue" }, undefinedOperand);
     expect(evalExpr(expr, new Map(), store, null)).toEqual(VTrue);
   });
 
-  it("a true antecedent still requires a defined Boolean consequent", () => {
-    const expr: Expr = {
-      tag: "EBinOp",
-      op: "implies",
-      e1: { tag: "ETrue" },
-      e2: { tag: "EBinOp", op: "div", e1: { tag: "EIntLit", n: 1 }, e2: { tag: "EIntLit", n: 0 } },
-    };
-    expect(evalExpr(expr, new Map(), store, null)).toBeNull();
+  it("a false antecedent hides an undefined consequent", () => {
+    const expr = connective("implies", { tag: "EFalse" }, undefinedOperand);
+    expect(evalExpr(expr, new Map(), store, null)).toEqual(VTrue);
+  });
+
+  it("an undecided connective still requires a defined Boolean second operand", () => {
+    expect(
+      evalExpr(connective("implies", { tag: "ETrue" }, undefinedOperand), new Map(), store, null),
+    ).toBeNull();
+    expect(
+      evalExpr(connective("and", { tag: "ETrue" }, undefinedOperand), new Map(), store, null),
+    ).toBeNull();
+    expect(
+      evalExpr(connective("or", { tag: "EFalse" }, undefinedOperand), new Map(), store, null),
+    ).toBeNull();
+  });
+
+  it("a non-Boolean left operand is undefined, whatever the right one is", () => {
+    for (const op of ["and", "or", "implies"] as const) {
+      const expr = connective(op, { tag: "EIntLit", n: 1 }, { tag: "ETrue" });
+      expect(evalExpr(expr, new Map(), store, null)).toBeNull();
+    }
+  });
+});
+
+describe("an invariant holds on any Boolean true, not just the canonical one", () => {
+  const flagHolds = {
+    context: "C",
+    name: "flagHolds",
+    body: { tag: "ENav" as const, e: { tag: "ESelf" as const }, f: "flag" },
+  };
+
+  function flagged(initial: boolean) {
+    const rs = new ReactiveStore();
+    rs.registerClass("C", { flag: { tag: "Bool", initial } });
+    return { rs, obj: rs.getClass("C")!.create({ flag: initial }) };
+  }
+
+  it("holds for a field left at its declared initial value", () => {
+    const { rs, obj } = flagged(true);
+    expect(compileInvariant(flagHolds, rs.core, obj.oid).value).toBe(true);
+  });
+
+  it("holds for a field written true, whose value is not the canonical one", () => {
+    const { rs, obj } = flagged(true);
+    obj.setBool("flag", true);
+
+    const raw = evalExpr(flagHolds.body, new Map([["self", vobj(obj.oid, "C")]]), rs.core, null);
+    expect(raw).toEqual(VTrue);
+    expect(raw === VTrue).toBe(false);
+
+    expect(compileInvariant(flagHolds, rs.core, obj.oid).value).toBe(true);
+  });
+
+  it("tracks the field as it is written back and forth", () => {
+    const { rs, obj } = flagged(true);
+    const holds = compileInvariant(flagHolds, rs.core, obj.oid);
+
+    obj.setBool("flag", false);
+    expect(holds.value).toBe(false);
+
+    obj.setBool("flag", true);
+    expect(holds.value).toBe(true);
   });
 });
 
 describe("@pre reads the state recorded at transaction begin", () => {
-  /** context C inv conservation: self.a + self.b = self.a@pre + self.b@pre */
   const conservation = {
     context: "C",
     name: "conservation",
@@ -312,10 +372,8 @@ describe("@pre reads the state recorded at transaction begin", () => {
     const { store: s, tx } = scenario();
     tx.begin();
     tx.mutate(() => s.write("C:1:a", vint(350)));
-    // The heap holds just the mutated cell...
     expect(tx.preHeap!.size).toBe(1);
     expect(tx.preHeap!.get("C:1:a")).toEqual(vint(300));
-    // ...yet reads agree with a full snapshot taken at begin.
     expect(tx.$pre("C:1:a")).toEqual(vint(300));
     expect(tx.$pre("C:1:b")).toEqual(vint(700));
     tx.commit();

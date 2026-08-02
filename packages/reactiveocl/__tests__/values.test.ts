@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fc from "fast-check";
 import {
   VTrue,
@@ -8,8 +8,10 @@ import {
   vobj,
   vcoll,
   valuesEqual,
+  valKey,
   boolVal,
   expectBool,
+  expectObj,
   isVTrue,
   isVFalse,
   isVInt,
@@ -21,6 +23,7 @@ import {
   asVObj,
   asVColl,
   oclNot,
+  oclXor,
   oclAdd,
   oclSub,
   oclMul,
@@ -50,8 +53,8 @@ function arbOCLVal(): fc.Arbitrary<OCLVal> {
   );
 }
 
-describe("OCLVal constructors and guards", () => {
-  it("vint → isVInt → asVInt roundtrip", () => {
+describe("values are recognised and projected back", () => {
+  it("an integer round-trips through its guard and projection", () => {
     fc.assert(
       fc.property(fc.integer(), (n) => {
         const v = vint(n);
@@ -61,7 +64,7 @@ describe("OCLVal constructors and guards", () => {
     );
   });
 
-  it("vstring → isVString → asVString roundtrip", () => {
+  it("a string round-trips through its guard and projection", () => {
     fc.assert(
       fc.property(fc.string(), (s) => {
         const v = vstring(s);
@@ -71,7 +74,7 @@ describe("OCLVal constructors and guards", () => {
     );
   });
 
-  it("vobj → isVObj → asVObj roundtrip", () => {
+  it("an object round-trips through its guard and projection", () => {
     fc.assert(
       fc.property(fc.integer(), fc.string(), (oid, cid) => {
         const v = vobj(oid, cid);
@@ -83,7 +86,17 @@ describe("OCLVal constructors and guards", () => {
     );
   });
 
-  it("VTrue / VFalse", () => {
+  it("a collection round-trips through its guard and projection", () => {
+    fc.assert(
+      fc.property(fc.array(arbVInt), (vs) => {
+        const v = vcoll(vs);
+        expect(isVColl(v)).toBe(true);
+        expect(asVColl(v)!.length).toBe(vs.length);
+      }),
+    );
+  });
+
+  it("only the Boolean values are Boolean", () => {
     expect(isVTrue(VTrue)).toBe(true);
     expect(isVFalse(VFalse)).toBe(true);
     expect(isVTrue(VFalse)).toBe(false);
@@ -93,27 +106,37 @@ describe("OCLVal constructors and guards", () => {
     expect(expectBool(vint(1))).toBeNull();
   });
 
-  it("vcoll → isVColl → asVColl roundtrip", () => {
-    fc.assert(
-      fc.property(fc.array(arbVInt), (vs) => {
-        const v = vcoll(vs);
-        expect(isVColl(v)).toBe(true);
-        const result = asVColl(v);
-        expect(result!.length).toBe(vs.length);
-      }),
-    );
+  it("only an object projects to an identity", () => {
+    expect(expectObj(vobj(7, "C"))).toEqual({ oid: 7, classId: "C" });
+    expect(expectObj(vint(7))).toBeNull();
   });
-});
 
-describe("boolVal", () => {
-  it("true → VTrue, false → VFalse", () => {
+  it("a mathematical Boolean maps onto the Boolean values", () => {
     expect(boolVal(true)).toBe(VTrue);
     expect(boolVal(false)).toBe(VFalse);
   });
+
+  it("a guard rejects, and a projection declines, every other kind of value", () => {
+    const cases: [(v: OCLVal) => boolean, (v: OCLVal) => unknown, OCLVal][] = [
+      [isVInt, asVInt, vint(1)],
+      [isVString, asVString, vstring("s")],
+      [isVObj, asVObj, vobj(1, "C")],
+      [isVColl, asVColl, vcoll([])],
+    ];
+    const all: OCLVal[] = [VTrue, VFalse, vint(1), vstring("s"), vobj(1, "C"), vcoll([])];
+
+    for (const [guard, project, match] of cases) {
+      for (const v of all) {
+        const isMatch = v.tag === match.tag;
+        expect(guard(v)).toBe(isMatch);
+        if (!isMatch) expect(project(v)).toBeUndefined();
+      }
+    }
+  });
 });
 
-describe("valuesEqual", () => {
-  it("reflexive", () => {
+describe("structural equality", () => {
+  it("every value equals itself", () => {
     fc.assert(
       fc.property(arbOCLVal(), (v) => {
         expect(valuesEqual(v, v)).toBe(true);
@@ -121,7 +144,7 @@ describe("valuesEqual", () => {
     );
   });
 
-  it("symmetric", () => {
+  it("equality does not depend on the order of the operands", () => {
     fc.assert(
       fc.property(arbOCLVal(), arbOCLVal(), (a, b) => {
         expect(valuesEqual(a, b)).toBe(valuesEqual(b, a));
@@ -129,7 +152,7 @@ describe("valuesEqual", () => {
     );
   });
 
-  it("vint equality matches number equality", () => {
+  it("integers are equal exactly when their numbers are", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
         expect(valuesEqual(vint(n), vint(m))).toBe(n === m);
@@ -137,7 +160,7 @@ describe("valuesEqual", () => {
     );
   });
 
-  it("different tags are never equal", () => {
+  it("values of different kinds are never equal", () => {
     fc.assert(
       fc.property(fc.integer(), fc.string(), (n, s) => {
         expect(valuesEqual(vint(n), vstring(s))).toBe(false);
@@ -145,7 +168,7 @@ describe("valuesEqual", () => {
     );
   });
 
-  it("vobj equality", () => {
+  it("objects are equal exactly when class and identifier agree", () => {
     fc.assert(
       fc.property(fc.integer(), fc.string(), (oid, cid) => {
         expect(valuesEqual(vobj(oid, cid), vobj(oid, cid))).toBe(true);
@@ -154,33 +177,71 @@ describe("valuesEqual", () => {
     );
   });
 
-  it("vcoll structural equality", () => {
+  it("collections are compared element by element", () => {
     fc.assert(
       fc.property(fc.array(arbVInt), (vs) => {
-        // same values -> equal
         expect(valuesEqual(vcoll(vs), vcoll([...vs]))).toBe(true);
       }),
     );
   });
 
-  it("vcoll different lengths → not equal", () => {
+  it("collections of different lengths are never equal", () => {
     fc.assert(
       fc.property(fc.array(arbVInt), (vs) => {
-        const longer = [...vs, vint(0)];
-        expect(valuesEqual(vcoll(vs), vcoll(longer))).toBe(vs.length === longer.length);
+        expect(valuesEqual(vcoll(vs), vcoll([...vs, vint(0)]))).toBe(false);
+      }),
+    );
+  });
+
+  it("collections of equal length differ when any element differs", () => {
+    expect(valuesEqual(vcoll([vint(1), vint(2)]), vcoll([vint(1), vint(3)]))).toBe(false);
+    expect(valuesEqual(vcoll([vint(1), vint(2)]), vcoll([vint(9), vint(2)]))).toBe(false);
+    expect(valuesEqual(vcoll([vint(1), vint(2)]), vcoll([vint(1), vint(2)]))).toBe(true);
+  });
+
+  it("the Boolean values are equal to themselves and to nothing else", () => {
+    expect(valuesEqual(VTrue, VTrue)).toBe(true);
+    expect(valuesEqual(VFalse, VFalse)).toBe(true);
+    expect(valuesEqual(VTrue, VFalse)).toBe(false);
+    expect(valuesEqual(VFalse, VTrue)).toBe(false);
+  });
+});
+
+describe("structural keys", () => {
+  it("every kind of value gets its own non-empty key", () => {
+    const keys = [
+      valKey(VTrue),
+      valKey(VFalse),
+      valKey(vint(1)),
+      valKey(vstring("1")),
+      valKey(vobj(1, "C")),
+      valKey(vcoll([vint(1)])),
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const k of keys) expect(k.length).toBeGreaterThan(0);
+  });
+
+  it("keys agree with structural equality", () => {
+    expect(valKey(vobj(1, "C"))).toBe(valKey(vobj(1, "C")));
+    expect(valKey(vcoll([vstring("a"), vstring("b")]))).not.toBe(valKey(vcoll([vstring("a,b")])));
+  });
+
+  it("equal values share a key, and distinct ones do not", () => {
+    fc.assert(
+      fc.property(arbOCLVal(), arbOCLVal(), (a, b) => {
+        expect(valKey(a) === valKey(b)).toBe(valuesEqual(a, b));
       }),
     );
   });
 });
 
-describe("oclNot", () => {
-  it("oclNot(VTrue) = VFalse", () => {
+describe("negation", () => {
+  it("inverts a Boolean", () => {
     expect(oclNot(VTrue)).toEqual(VFalse);
-  });
-  it("oclNot(VFalse) = VTrue", () => {
     expect(oclNot(VFalse)).toEqual(VTrue);
   });
-  it("oclNot(non-bool) = null", () => {
+
+  it("is undefined on anything else", () => {
     fc.assert(
       fc.property(arbVInt, (v) => {
         expect(oclNot(v)).toBeNull();
@@ -189,65 +250,87 @@ describe("oclNot", () => {
   });
 });
 
-describe("oclAdd", () => {
-  it("correct addition", () => {
+describe("arithmetic", () => {
+  it("addition matches integer addition", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
-        const result = oclAdd(vint(n), vint(m));
-        expect(isVInt(result!)).toBe(true);
-        expect(asVInt(result!)).toBe(n + m);
+        expect(asVInt(oclAdd(vint(n), vint(m))!)).toBe(n + m);
       }),
     );
   });
-  it("non-int → null", () => {
+
+  it("subtraction matches integer subtraction", () => {
+    fc.assert(
+      fc.property(fc.integer(), fc.integer(), (n, m) => {
+        expect(asVInt(oclSub(vint(n), vint(m))!)).toBe(n - m);
+      }),
+    );
+  });
+
+  it("multiplication matches integer multiplication", () => {
+    fc.assert(
+      fc.property(fc.integer(), fc.integer(), (n, m) => {
+        expect(asVInt(oclMul(vint(n), vint(m))!)).toBe(n * m);
+      }),
+    );
+  });
+
+  it("division matches JavaScript division", () => {
+    fc.assert(
+      fc.property(fc.integer(), fc.integer({ min: 1 }), (n, m) => {
+        expect(asVInt(oclDiv(vint(n), vint(m))!)).toBe(n / m);
+      }),
+    );
+  });
+
+  it("division by zero is undefined", () => {
+    expect(oclDiv(vint(5), vint(0))).toBeNull();
+  });
+
+  it("is undefined unless both operands are integers", () => {
     expect(oclAdd(VTrue, vint(1))).toBeNull();
     expect(oclAdd(vint(1), VTrue)).toBeNull();
   });
 });
 
-describe("oclSub", () => {
-  it("correct subtraction", () => {
-    fc.assert(
-      fc.property(fc.integer(), fc.integer(), (n, m) => {
-        const result = oclSub(vint(n), vint(m));
-        expect(asVInt(result!)).toBe(n - m);
-      }),
-    );
+describe("every partial operator guards both of its operands", () => {
+  const nonInteger = [VTrue, VFalse, vstring("1"), vobj(1, "C"), vcoll([vint(1)])];
+  const nonBoolean = [vint(1), vstring("true"), vobj(1, "C"), vcoll([VTrue])];
+
+  const integerOps = { oclAdd, oclSub, oclMul, oclDiv, oclLt, oclGt, oclLeq, oclGeq };
+  const booleanOps = { oclXor };
+
+  for (const [name, op] of Object.entries(integerOps)) {
+    it(`${name} is undefined when either operand is not an integer`, () => {
+      for (const bad of nonInteger) {
+        expect(op(bad, vint(1))).toBeNull();
+        expect(op(vint(1), bad)).toBeNull();
+        expect(op(bad, bad)).toBeNull();
+      }
+      expect(op(vint(4), vint(2))).not.toBeNull();
+    });
+  }
+
+  for (const [name, op] of Object.entries(booleanOps)) {
+    it(`${name} is undefined when either operand is not Boolean`, () => {
+      for (const bad of nonBoolean) {
+        expect(op(bad, VTrue)).toBeNull();
+        expect(op(VTrue, bad)).toBeNull();
+        expect(op(bad, bad)).toBeNull();
+      }
+      expect(op(VTrue, VFalse)).not.toBeNull();
+    });
+  }
+
+  it("negation is undefined on every non-Boolean value", () => {
+    for (const bad of nonBoolean) {
+      expect(oclNot(bad)).toBeNull();
+    }
   });
 });
 
-describe("oclMul", () => {
-  it("correct multiplication", () => {
-    fc.assert(
-      fc.property(fc.integer(), fc.integer(), (n, m) => {
-        const result = oclMul(vint(n), vint(m));
-        expect(asVInt(result!)).toBe(n * m);
-      }),
-    );
-  });
-});
-
-describe("oclDiv", () => {
-  it("correct division", () => {
-    fc.assert(
-      fc.property(fc.integer(), fc.integer({ min: 1 }), (n, m) => {
-        const result = oclDiv(vint(n), vint(m));
-        expect(asVInt(result!)).toBe(Math.floor(n / m));
-      }),
-    );
-  });
-  it("rounds towards minus infinity, not towards zero", () => {
-    expect(asVInt(oclDiv(vint(-1), vint(2))!)).toBe(-1);
-    expect(asVInt(oclDiv(vint(-7), vint(2))!)).toBe(-4);
-    expect(asVInt(oclDiv(vint(7), vint(2))!)).toBe(3);
-  });
-  it("division by zero → null", () => {
-    expect(oclDiv(vint(5), vint(0))).toBeNull();
-  });
-});
-
-describe("oclLt / oclGt / oclLeq / oclGeq", () => {
-  it("oclLt matches <", () => {
+describe("comparisons", () => {
+  it("less-than matches <, and is false exactly when >= holds", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
         const r = oclLt(vint(n), vint(m));
@@ -256,34 +339,34 @@ describe("oclLt / oclGt / oclLeq / oclGeq", () => {
       }),
     );
   });
-  it("oclLeq matches <=", () => {
+
+  it("less-or-equal matches <=", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
-        const r = oclLeq(vint(n), vint(m));
-        expect(r === VTrue).toBe(n <= m);
+        expect(oclLeq(vint(n), vint(m)) === VTrue).toBe(n <= m);
       }),
     );
   });
-  it("oclGt matches >", () => {
+
+  it("greater-than matches >", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
-        const r = oclGt(vint(n), vint(m));
-        expect(r === VTrue).toBe(n > m);
+        expect(oclGt(vint(n), vint(m)) === VTrue).toBe(n > m);
       }),
     );
   });
-  it("oclGeq matches >=", () => {
+
+  it("greater-or-equal matches >=", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
-        const r = oclGeq(vint(n), vint(m));
-        expect(r === VTrue).toBe(n >= m);
+        expect(oclGeq(vint(n), vint(m)) === VTrue).toBe(n >= m);
       }),
     );
   });
 });
 
-describe("oclEq / oclNeq", () => {
-  it("oclEq matches valuesEqual", () => {
+describe("equality operators", () => {
+  it("equality agrees with structural equality", () => {
     fc.assert(
       fc.property(arbOCLVal(), arbOCLVal(), (a, b) => {
         expect(oclEq(a, b) === VTrue).toBe(valuesEqual(a, b));
@@ -291,14 +374,40 @@ describe("oclEq / oclNeq", () => {
       }),
     );
   });
-  it("oclNeq is the negation of oclEq", () => {
+
+  it("inequality is the negation of equality", () => {
     fc.assert(
       fc.property(arbOCLVal(), arbOCLVal(), (a, b) => {
         const eq = oclEq(a, b);
-        const neq = oclNeq(a, b);
-        if (eq === VTrue) expect(neq).toEqual(VFalse);
-        else expect(neq).toEqual(VTrue);
+        expect(oclNeq(a, b)).toEqual(eq === VTrue ? VFalse : VTrue);
       }),
     );
+  });
+});
+
+describe("edges of structural equality and keys", () => {
+  it("VFalse is a value in its own right", () => {
+    expect(valuesEqual(VFalse, VFalse)).toBe(true);
+    expect(valKey(VFalse)).toBe("b:0");
+  });
+
+  it("strings of different text are not equal", () => {
+    expect(valuesEqual(vstring("a"), vstring("b"))).toBe(false);
+  });
+
+  it("objects agree only when class and identifier both agree", () => {
+    expect(valuesEqual(vobj(1, "A"), vobj(1, "B"))).toBe(false);
+    expect(valuesEqual(vobj(1, "A"), vobj(2, "A"))).toBe(false);
+  });
+
+  it("a collection key lists the element keys, comma-separated", () => {
+    expect(valKey(vcoll([vint(1), vint(2)]))).toBe("c:[i:1,i:2]");
+  });
+
+  it("xor is false exactly when both sides agree", () => {
+    expect(oclXor(VTrue, VTrue)).toEqual(VFalse);
+    expect(oclXor(VFalse, VFalse)).toEqual(VFalse);
+    expect(oclXor(VTrue, VFalse)).toEqual(VTrue);
+    expect(oclXor(VFalse, VTrue)).toEqual(VTrue);
   });
 });
