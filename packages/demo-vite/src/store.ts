@@ -19,6 +19,20 @@ store.registerClass("PersonAccount", {
   savings: { tag: "Int", initial: 700 },
 });
 
+store.registerClass("Staff", {
+  name: { tag: "String", initial: "" },
+  accredited: { tag: "Bool", initial: true },
+});
+
+store.registerClass("Contractor", {}, { extends: "Staff" });
+
+store.registerClass("Registration", {
+  team: { tag: "String", initial: "" },
+  budget: { tag: "Int", initial: 0 },
+  passes: { tag: "Int", initial: 0 },
+  attendees: { tag: "Collection", elementClass: "Staff" },
+});
+
 store.registerClass("Product", {
   name: { tag: "String", initial: "" },
   price: { tag: "Int", initial: 0 },

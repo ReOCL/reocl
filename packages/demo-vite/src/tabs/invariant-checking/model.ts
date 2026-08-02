@@ -53,7 +53,6 @@ export const NAME_POOL: { name: string; isMale: boolean }[] = [
   { name: "Zoe", isMale: false },
 ];
 
-/** Cycles through the pool, suffixing each further lap: Alice, ..., Alice-2, ... */
 export function nameForIndex(i: number): { name: string; isMale: boolean } {
   if (i < NAME_POOL.length) return NAME_POOL[i]!;
   const extra = i - NAME_POOL.length;

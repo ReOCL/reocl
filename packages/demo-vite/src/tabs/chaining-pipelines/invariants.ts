@@ -13,5 +13,5 @@ export const inventoryOk$ = computed(() => totalInventoryValue$.value < TOTAL_IN
 export const inventoryOk = invariant(
   "inventoryOk",
   inventoryOk$,
-  `select(qty>0) -> collect(price * qty) -> sum < ${TOTAL_INVENTORY_LIMIT.toLocaleString()}`,
+  `products -> select(p | p.quantity > 0) -> collect(p | p.price * p.quantity) -> sum() < ${TOTAL_INVENTORY_LIMIT}`,
 );

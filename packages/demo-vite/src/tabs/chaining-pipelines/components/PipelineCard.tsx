@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { products$, removeProduct } from "@/tabs/chaining-pipelines/model";
 import { inStock$, itemValues$, totalInventoryValue$ } from "@/tabs/chaining-pipelines/invariants";
 import { TOTAL_INVENTORY_LIMIT } from "@/tabs/chaining-pipelines/config";
@@ -7,7 +8,7 @@ function Step({ op }: { op: string }) {
   return <div class="text-center text-secondary py-1">↓ {op}</div>;
 }
 
-function StageCard({ children }: { children: any }) {
+function StageCard({ children }: { children: ComponentChildren }) {
   return (
     <div class="card border mb-2">
       <div class="card-body p-2">{children}</div>

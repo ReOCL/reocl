@@ -25,7 +25,11 @@ export function SignalValue({ name, value, code, showCode }: Props) {
         <strong class="me-2">{name}</strong>
         <span class="ms-auto fw-bold">{value}</span>
       </div>
-      {showCode && <pre class="bg-light border-top p-3 mb-0">{code}</pre>}
+      {showCode && (
+        <pre class="bg-light border-top p-3 mb-0" style={{ whiteSpace: "normal" }}>
+          {code}
+        </pre>
+      )}
     </div>
   );
 }

@@ -5,5 +5,5 @@ import { MIN_SALARY } from "./config";
 export const noUnpaid = invariant(
   "noUnpaid",
   dept.noUnpaid$,
-  `self.employees->forAll(e | e.salary >= ${MIN_SALARY})`,
+  `self.employees -> forAll(e | e.salary >= ${MIN_SALARY})`,
 );

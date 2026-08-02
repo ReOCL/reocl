@@ -49,7 +49,11 @@ export function InvariantStatus({ name, satisfied, code, showCode }: Props) {
         {satisfied ? check : cross}
         <strong>{name}</strong>
       </div>
-      {showCode && <pre class="bg-light border-top p-3 mb-0">{code}</pre>}
+      {showCode && (
+        <pre class="bg-light border-top p-3 mb-0" style={{ whiteSpace: "normal" }}>
+          {code}
+        </pre>
+      )}
     </div>
   );
 }

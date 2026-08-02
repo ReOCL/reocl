@@ -4,7 +4,7 @@ import { pa } from "./model";
 export const conservation = invariant(
   "conservation",
   pa.conservation$,
-  `checking + savings = checking@pre + savings@pre`,
+  `self.checking + self.savings = self.checking@pre + self.savings@pre`,
 );
-export const checkingNonNeg = invariant("checkingNonNeg", pa.checkingNonNeg$, `checking >= 0`);
-export const savingsNonNeg = invariant("savingsNonNeg", pa.savingsNonNeg$, `savings >= 0`);
+export const checkingNonNeg = invariant("checkingNonNeg", pa.checkingNonNeg$, `self.checking >= 0`);
+export const savingsNonNeg = invariant("savingsNonNeg", pa.savingsNonNeg$, `self.savings >= 0`);
