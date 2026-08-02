@@ -1,6 +1,9 @@
 name: dependabot auto-merge
 
-on: pull_request
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
 
 permissions:
   contents: write
@@ -9,15 +12,19 @@ permissions:
 jobs:
   dependabot:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: github.event.workflow_run.conclusion == 'success'
     steps:
-      - name: Approve
-        run: gh pr review --approve "$PR_URL"
+      - name: Approve and merge
+        run: |
+          PR_URL="${{ github.event.workflow_run.pull_requests[0].url }}"
+          if [ -z "$PR_URL" ] || [ "$PR_URL" = "null" ]; then
+            echo "No pull request associated with this run"; exit 0
+          fi
+          AUTHOR=$(gh pr view "$PR_URL" --json author --jq .author.login)
+          if [ "$AUTHOR" != "dependabot[bot]" ]; then
+            echo "Not a dependabot PR"; exit 0
+          fi
+          gh pr review --approve "$PR_URL"
+          gh pr merge --squash "$PR_URL"
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Enable auto-merge
-        run: gh pr merge --auto --squash "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
