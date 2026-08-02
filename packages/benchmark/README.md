@@ -31,3 +31,9 @@ bun run plot
 ```
 
 Writes `results/rq2.json`, `results/rq2.csv`, and PDFs in `figures/`. You'll need a working Python environment with `matplotlib`.
+
+## Layout
+
+- [src](src/) - benchmark implementations
+- [scripts](scripts/) - result plotting
+- [results](results/) - measured results
