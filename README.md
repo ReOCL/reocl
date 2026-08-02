@@ -2,7 +2,7 @@
 
 # ReOCL
 
-**ReOCL** is a reactive core of the Object Constraint Language (OCL) for TypeScript web applications. It compiles OCL invariants into reactive signals, providing constant-time incremental validation via delta-based collection maintenance and transactional `@pre` support.
+**ReOCL** is a reactive core of the Object Constraint Language (OCL) for TypeScript web applications. It compiles OCL invariants into reactive signals, providing incremental validation via delta-based collection maintenance and transactional `@pre` support.
 
 ## Installation
 
