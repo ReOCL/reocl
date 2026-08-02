@@ -145,8 +145,7 @@ export function oclDiv(a: OCLVal, b: OCLVal): OCLVal | null {
   const n = expectInt(a);
   const m = expectInt(b);
   if (n === null || m === null || m === 0) return null;
-  // Integer division rounds towards minus infinity, unlike JavaScript truncation.
-  return vint(Math.floor(n / m));
+  return vint(n / m);
 }
 
 export function oclEq(a: OCLVal, b: OCLVal): OCLVal {
