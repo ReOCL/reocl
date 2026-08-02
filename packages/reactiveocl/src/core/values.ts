@@ -42,7 +42,7 @@ export function expectBool(v: OCLVal): boolean | null {
   return null;
 }
 
-export function expectInt(v: OCLVal): number | null {
+function expectInt(v: OCLVal): number | null {
   return v.tag === "VInt" ? v.n : null;
 }
 

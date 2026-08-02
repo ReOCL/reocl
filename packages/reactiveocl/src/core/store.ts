@@ -72,5 +72,3 @@ export class Store {
 }
 
 export type Heap = Map<StateId, OCLVal>;
-
-export { fieldStateId };
