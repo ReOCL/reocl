@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bunx tsc -p packages/reactiveocl --noEmit
+      - run: bunx tsc -p packages/demo-vite --noEmit
+      - run: bunx tsc -p packages/benchmark --noEmit
+      - run: bunx oxlint
