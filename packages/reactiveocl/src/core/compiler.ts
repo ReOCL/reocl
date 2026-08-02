@@ -13,15 +13,16 @@ import {
   TString,
   TObject,
   TCollection,
-  typesCompatible,
   typesEqual,
   joinTypes,
 } from "./types";
 import type { OCLVal } from "./values";
 import {
   boolVal,
-  expectBool,
-  expectColl,
+  isVColl,
+  isVFalse,
+  isVInt,
+  isVTrue,
   oclAdd,
   oclDiv,
   oclEq,
@@ -77,7 +78,7 @@ function typeBinOp(op: BinOp, t1: OCLType, t2: OCLType): OCLType | null {
     case "or":
     case "implies":
     case "xor":
-      if (typesCompatible(t1, TBool) && typesCompatible(t2, TBool)) return TBool;
+      if (typesEqual(t1, TBool) && typesEqual(t2, TBool)) return TBool;
       return null;
     case "eq":
     case "neq":
@@ -87,15 +88,30 @@ function typeBinOp(op: BinOp, t1: OCLType, t2: OCLType): OCLType | null {
     case "gt":
     case "leq":
     case "geq":
-      if (typesCompatible(t1, TInt) && typesCompatible(t2, TInt)) return TBool;
+      if (typesEqual(t1, TInt) && typesEqual(t2, TInt)) return TBool;
       return null;
     case "add":
     case "sub":
     case "mul":
     case "div":
-      if (typesCompatible(t1, TInt) && typesCompatible(t2, TInt)) return TInt;
+      if (typesEqual(t1, TInt) && typesEqual(t2, TInt)) return TInt;
       return null;
   }
+}
+
+function typeQuantifier(
+  env: Env,
+  e: { e1: Expr; x: string; e2: Expr },
+  mm: MetaModel,
+  requireBool: boolean,
+): { elem: OCLType; body: OCLType } | null {
+  const t1 = typeOf(env, e.e1, mm);
+  if (!t1 || t1.tag !== "TCollection") return null;
+  const extEnv: Env = new Map(env);
+  extEnv.set(e.x, t1.t);
+  const t2 = typeOf(extEnv, e.e2, mm);
+  if (!t2 || (requireBool && !typesEqual(t2, TBool))) return null;
+  return { elem: t1.t, body: t2 };
 }
 
 export function typeOf(env: Env, e: Expr, mm: MetaModel): OCLType | null {
@@ -133,88 +149,39 @@ export function typeOf(env: Env, e: Expr, mm: MetaModel): OCLType | null {
     }
     case "ENot": {
       const t = typeOf(env, e.e, mm);
-      if (!t || !typesCompatible(t, TBool)) return null;
+      if (!t || !typesEqual(t, TBool)) return null;
       return TBool;
     }
     case "EIf": {
       const tg = typeOf(env, e.e1, mm);
       const tt = typeOf(env, e.e2, mm);
       const te = typeOf(env, e.e3, mm);
-      if (!tg || !typesCompatible(tg, TBool)) return null;
+      if (!tg || !typesEqual(tg, TBool)) return null;
       if (!tt || !te) return null;
       return joinTypes(tt, te);
     }
-    case "ESelect": {
-      const t1 = typeOf(env, e.e1, mm);
-      if (!t1 || t1.tag !== "TCollection") return null;
-      const extEnv: Env = new Map(env);
-      extEnv.set(e.x, t1.t);
-      const t2 = typeOf(extEnv, e.e2, mm);
-      if (!t2 || !typesCompatible(t2, TBool)) return null;
-      return TCollection(t1.t);
-    }
+    case "ESelect":
     case "EReject": {
-      const t1 = typeOf(env, e.e1, mm);
-      if (!t1 || t1.tag !== "TCollection") return null;
-      const extEnv: Env = new Map(env);
-      extEnv.set(e.x, t1.t);
-      const t2 = typeOf(extEnv, e.e2, mm);
-      if (!t2 || !typesCompatible(t2, TBool)) return null;
-      return TCollection(t1.t);
+      const q = typeQuantifier(env, e, mm, true);
+      return q === null ? null : TCollection(q.elem);
     }
     case "ECollect": {
-      const t1 = typeOf(env, e.e1, mm);
-      if (!t1 || t1.tag !== "TCollection") return null;
-      const extEnv = new Map(env);
-      extEnv.set(e.x, t1.t);
-      const t2 = typeOf(extEnv, e.e2, mm);
-      if (!t2) return null;
-      return TCollection(t2);
+      const q = typeQuantifier(env, e, mm, false);
+      return q === null ? null : TCollection(q.body);
     }
-    case "EForAll": {
-      const t1 = typeOf(env, e.e1, mm);
-      if (!t1 || t1.tag !== "TCollection") return null;
-      const extEnv = new Map(env);
-      extEnv.set(e.x, t1.t);
-      const t2 = typeOf(extEnv, e.e2, mm);
-      if (!t2 || !typesCompatible(t2, TBool)) return null;
-      return TBool;
-    }
-    case "EExists": {
-      const t1 = typeOf(env, e.e1, mm);
-      if (!t1 || t1.tag !== "TCollection") return null;
-      const extEnv = new Map(env);
-      extEnv.set(e.x, t1.t);
-      const t2 = typeOf(extEnv, e.e2, mm);
-      if (!t2 || !typesCompatible(t2, TBool)) return null;
-      return TBool;
-    }
+    case "EForAll":
+    case "EExists":
     case "EOne": {
-      const t1 = typeOf(env, e.e1, mm);
-      if (!t1 || t1.tag !== "TCollection") return null;
-      const extEnv = new Map(env);
-      extEnv.set(e.x, t1.t);
-      const t2 = typeOf(extEnv, e.e2, mm);
-      if (!t2 || !typesCompatible(t2, TBool)) return null;
-      return TBool;
+      const q = typeQuantifier(env, e, mm, true);
+      return q === null ? null : TBool;
     }
     case "EIsUnique": {
-      const t1 = typeOf(env, e.e1, mm);
-      if (!t1 || t1.tag !== "TCollection") return null;
-      const extEnv = new Map(env);
-      extEnv.set(e.x, t1.t);
-      const t2 = typeOf(extEnv, e.e2, mm);
-      if (!t2) return null;
-      return TBool;
+      const q = typeQuantifier(env, e, mm, false);
+      return q === null ? null : TBool;
     }
     case "EAny": {
-      const t1 = typeOf(env, e.e1, mm);
-      if (!t1 || t1.tag !== "TCollection") return null;
-      const extEnv = new Map(env);
-      extEnv.set(e.x, t1.t);
-      const t2 = typeOf(extEnv, e.e2, mm);
-      if (!t2 || !typesCompatible(t2, TBool)) return null;
-      return t1.t;
+      const q = typeQuantifier(env, e, mm, true);
+      return q === null ? null : q.elem;
     }
     case "ESize": {
       const t = typeOf(env, e.e, mm);
@@ -269,7 +236,21 @@ function evalBool(
   mm?: MetaModel,
 ): boolean | null {
   const r = evalExpr(e, env, store, heap, mm);
-  return r === null ? null : expectBool(r);
+  if (r === null) return null;
+  if (isVTrue(r)) return true;
+  if (isVFalse(r)) return false;
+  return null;
+}
+
+function evalColl(
+  e: Expr,
+  env: ValEnv,
+  store: Store,
+  heap: Map<string, OCLVal> | null,
+  mm?: MetaModel,
+): OCLVal[] | null {
+  const c = evalExpr(e, env, store, heap, mm);
+  return c !== null && isVColl(c) ? c.vs : null;
 }
 
 function evalIterBools(
@@ -281,9 +262,7 @@ function evalIterBools(
   heap: Map<string, OCLVal> | null,
   mm?: MetaModel,
 ): { vs: OCLVal[]; bs: boolean[] } | null {
-  const c = evalExpr(source, env, store, heap, mm);
-  if (c === null) return null;
-  const vs = expectColl(c);
+  const vs = evalColl(source, env, store, heap, mm);
   if (vs === null) return null;
   const bs: boolean[] = [];
   for (const v of vs) {
@@ -332,15 +311,18 @@ export function evalExpr(
       if (v1 === null) return null;
 
       if (expr.op === "and" || expr.op === "or" || expr.op === "implies") {
-        const b1 = expectBool(v1);
-        if (b1 === null) return null;
+        let b1: boolean;
+        if (isVTrue(v1)) b1 = true;
+        else if (isVFalse(v1)) b1 = false;
+        else return null;
         if (expr.op === "and" && !b1) return VFalse;
         if (expr.op === "or" && b1) return VTrue;
         if (expr.op === "implies" && !b1) return VTrue;
         const v2 = evalExpr(expr.e2, env, store, heap, mm);
         if (v2 === null) return null;
-        const b2 = expectBool(v2);
-        return b2 === null ? null : boolVal(b2);
+        if (isVTrue(v2)) return VTrue;
+        if (isVFalse(v2)) return VFalse;
+        return null;
       }
 
       const v2 = evalExpr(expr.e2, env, store, heap, mm);
@@ -353,9 +335,10 @@ export function evalExpr(
     }
     case "EIf": {
       const guard = evalExpr(expr.e1, env, store, heap, mm);
-      const bg = guard === null ? null : expectBool(guard);
-      if (bg === null) return null;
-      return evalExpr(bg ? expr.e2 : expr.e3, env, store, heap, mm);
+      if (guard === null) return null;
+      if (isVTrue(guard)) return evalExpr(expr.e2, env, store, heap, mm);
+      if (isVFalse(guard)) return evalExpr(expr.e3, env, store, heap, mm);
+      return null;
     }
     case "ESelect": {
       const it = evalIterBools(expr.e1, expr.x, expr.e2, env, store, heap, mm);
@@ -368,9 +351,7 @@ export function evalExpr(
       return { tag: "VColl", vs: it.vs.filter((_, i) => !it.bs[i]!) };
     }
     case "ECollect": {
-      const c = evalExpr(expr.e1, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e1, env, store, heap, mm);
       if (vs === null) return null;
       const out: OCLVal[] = [];
       for (const v of vs) {
@@ -381,9 +362,7 @@ export function evalExpr(
       return { tag: "VColl", vs: out };
     }
     case "EForAll": {
-      const c = evalExpr(expr.e1, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e1, env, store, heap, mm);
       if (vs === null) return null;
       for (const v of vs) {
         const b = evalBool(expr.e2, bindVar(env, expr.x, v), store, heap, mm);
@@ -393,9 +372,7 @@ export function evalExpr(
       return VTrue;
     }
     case "EExists": {
-      const c = evalExpr(expr.e1, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e1, env, store, heap, mm);
       if (vs === null) return null;
       for (const v of vs) {
         const b = evalBool(expr.e2, bindVar(env, expr.x, v), store, heap, mm);
@@ -410,9 +387,7 @@ export function evalExpr(
       return boolVal(it.bs.filter((b) => b).length === 1);
     }
     case "EIsUnique": {
-      const c = evalExpr(expr.e1, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e1, env, store, heap, mm);
       if (vs === null) return null;
       const keys: string[] = [];
       for (const v of vs) {
@@ -423,9 +398,7 @@ export function evalExpr(
       return boolVal(new Set(keys).size === keys.length);
     }
     case "EAny": {
-      const c = evalExpr(expr.e1, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e1, env, store, heap, mm);
       if (vs === null) return null;
       for (const v of vs) {
         const b = evalBool(expr.e2, bindVar(env, expr.x, v), store, heap, mm);
@@ -435,33 +408,25 @@ export function evalExpr(
       return null;
     }
     case "ESize": {
-      const c = evalExpr(expr.e, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e, env, store, heap, mm);
       return vs === null ? null : vint(vs.length);
     }
     case "ESum": {
-      const c = evalExpr(expr.e, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e, env, store, heap, mm);
       if (vs === null) return null;
       let total = 0;
       for (const v of vs) {
-        if (v.tag !== "VInt") return null;
+        if (!isVInt(v)) return null;
         total += v.n;
       }
       return vint(total);
     }
     case "EIsEmpty": {
-      const c = evalExpr(expr.e, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e, env, store, heap, mm);
       return vs === null ? null : boolVal(vs.length === 0);
     }
     case "ENotEmpty": {
-      const c = evalExpr(expr.e, env, store, heap, mm);
-      if (c === null) return null;
-      const vs = expectColl(c);
+      const vs = evalColl(expr.e, env, store, heap, mm);
       return vs === null ? null : boolVal(vs.length > 0);
     }
     case "EKindOf": {

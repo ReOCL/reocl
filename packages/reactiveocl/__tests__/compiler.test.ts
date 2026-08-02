@@ -78,7 +78,7 @@ describe("arithmetic and comparison", () => {
     expect(evalIn(bin("add", int(3), int(4)))).toEqual(vint(7));
     expect(evalIn(bin("sub", int(10), int(3)))).toEqual(vint(7));
     expect(evalIn(bin("mul", int(4), int(5)))).toEqual(vint(20));
-    expect(evalIn(bin("div", int(10), int(3)))).toEqual(vint(10 / 3));
+    expect(evalIn(bin("div", int(10), int(3)))).toEqual(vint(3));
   });
 
   it("compares integers", () => {

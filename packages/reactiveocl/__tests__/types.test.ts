@@ -6,7 +6,6 @@ import {
   TObject,
   TCollection,
   typesEqual,
-  typesCompatible,
   joinTypes,
   fieldStateId,
   type Expr,
@@ -64,8 +63,8 @@ describe("type equality", () => {
   });
 
   it("compatibility is equality: there is no subtyping in the core", () => {
-    expect(typesCompatible(TBool, TBool)).toBe(true);
-    expect(typesCompatible(TBool, TInt)).toBe(false);
+    expect(typesEqual(TBool, TBool)).toBe(true);
+    expect(typesEqual(TBool, TInt)).toBe(false);
   });
 
   it("two branches join only when they already agree", () => {

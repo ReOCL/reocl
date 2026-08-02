@@ -10,18 +10,12 @@ import {
   valuesEqual,
   valKey,
   boolVal,
-  expectBool,
-  expectObj,
   isVTrue,
   isVFalse,
   isVInt,
   isVString,
   isVObj,
   isVColl,
-  asVInt,
-  asVString,
-  asVObj,
-  asVColl,
   oclNot,
   oclXor,
   oclAdd,
@@ -53,45 +47,44 @@ function arbOCLVal(): fc.Arbitrary<OCLVal> {
   );
 }
 
-describe("values are recognised and projected back", () => {
-  it("an integer round-trips through its guard and projection", () => {
+describe("values are recognised by their guards", () => {
+  it("an integer is recognised and carries its number", () => {
     fc.assert(
       fc.property(fc.integer(), (n) => {
         const v = vint(n);
         expect(isVInt(v)).toBe(true);
-        expect(asVInt(v)).toBe(n);
+        expect(isVInt(v) ? v.n : null).toBe(n);
       }),
     );
   });
 
-  it("a string round-trips through its guard and projection", () => {
+  it("a string is recognised and carries its text", () => {
     fc.assert(
       fc.property(fc.string(), (s) => {
         const v = vstring(s);
         expect(isVString(v)).toBe(true);
-        expect(asVString(v)).toBe(s);
+        expect(isVString(v) ? v.s : null).toBe(s);
       }),
     );
   });
 
-  it("an object round-trips through its guard and projection", () => {
+  it("an object is recognised and carries its identity", () => {
     fc.assert(
       fc.property(fc.integer(), fc.string(), (oid, cid) => {
         const v = vobj(oid, cid);
         expect(isVObj(v)).toBe(true);
-        const o = asVObj(v);
-        expect(o!.oid).toBe(oid);
-        expect(o!.classId).toBe(cid);
+        expect(isVObj(v) ? v.oid : null).toBe(oid);
+        expect(isVObj(v) ? v.classId : null).toBe(cid);
       }),
     );
   });
 
-  it("a collection round-trips through its guard and projection", () => {
+  it("a collection is recognised and carries its elements", () => {
     fc.assert(
       fc.property(fc.array(arbVInt), (vs) => {
         const v = vcoll(vs);
         expect(isVColl(v)).toBe(true);
-        expect(asVColl(v)!.length).toBe(vs.length);
+        expect(isVColl(v) ? v.vs.length : null).toBe(vs.length);
       }),
     );
   });
@@ -101,14 +94,11 @@ describe("values are recognised and projected back", () => {
     expect(isVFalse(VFalse)).toBe(true);
     expect(isVTrue(VFalse)).toBe(false);
     expect(isVFalse(VTrue)).toBe(false);
-    expect(expectBool(VTrue)).toBe(true);
-    expect(expectBool(VFalse)).toBe(false);
-    expect(expectBool(vint(1))).toBeNull();
   });
 
-  it("only an object projects to an identity", () => {
-    expect(expectObj(vobj(7, "C"))).toEqual({ oid: 7, classId: "C" });
-    expect(expectObj(vint(7))).toBeNull();
+  it("only an object carries an object identity", () => {
+    expect(isVObj(vobj(7, "C"))).toBe(true);
+    expect(isVObj(vint(7))).toBe(false);
   });
 
   it("a mathematical Boolean maps onto the Boolean values", () => {
@@ -116,20 +106,18 @@ describe("values are recognised and projected back", () => {
     expect(boolVal(false)).toBe(VFalse);
   });
 
-  it("a guard rejects, and a projection declines, every other kind of value", () => {
-    const cases: [(v: OCLVal) => boolean, (v: OCLVal) => unknown, OCLVal][] = [
-      [isVInt, asVInt, vint(1)],
-      [isVString, asVString, vstring("s")],
-      [isVObj, asVObj, vobj(1, "C")],
-      [isVColl, asVColl, vcoll([])],
+  it("each guard recognises only its own kind of value", () => {
+    const guards: [(v: OCLVal) => boolean, OCLVal][] = [
+      [isVInt, vint(1)],
+      [isVString, vstring("s")],
+      [isVObj, vobj(1, "C")],
+      [isVColl, vcoll([])],
     ];
     const all: OCLVal[] = [VTrue, VFalse, vint(1), vstring("s"), vobj(1, "C"), vcoll([])];
 
-    for (const [guard, project, match] of cases) {
+    for (const [guard, match] of guards) {
       for (const v of all) {
-        const isMatch = v.tag === match.tag;
-        expect(guard(v)).toBe(isMatch);
-        if (!isMatch) expect(project(v)).toBeUndefined();
+        expect(guard(v)).toBe(v.tag === match.tag);
       }
     }
   });
@@ -254,7 +242,7 @@ describe("arithmetic", () => {
   it("addition matches integer addition", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
-        expect(asVInt(oclAdd(vint(n), vint(m))!)).toBe(n + m);
+        expect(oclAdd(vint(n), vint(m))).toEqual(vint(n + m));
       }),
     );
   });
@@ -262,7 +250,7 @@ describe("arithmetic", () => {
   it("subtraction matches integer subtraction", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
-        expect(asVInt(oclSub(vint(n), vint(m))!)).toBe(n - m);
+        expect(oclSub(vint(n), vint(m))).toEqual(vint(n - m));
       }),
     );
   });
@@ -270,16 +258,20 @@ describe("arithmetic", () => {
   it("multiplication matches integer multiplication", () => {
     fc.assert(
       fc.property(fc.integer(), fc.integer(), (n, m) => {
-        expect(asVInt(oclMul(vint(n), vint(m))!)).toBe(n * m);
+        expect(oclMul(vint(n), vint(m))).toEqual(vint(n * m));
       }),
     );
   });
 
-  it("division matches JavaScript division", () => {
+  it("division truncates toward zero, as integer division", () => {
     fc.assert(
-      fc.property(fc.integer(), fc.integer({ min: 1 }), (n, m) => {
-        expect(asVInt(oclDiv(vint(n), vint(m))!)).toBe(n / m);
-      }),
+      fc.property(
+        fc.integer(),
+        fc.integer().filter((m) => m !== 0),
+        (n, m) => {
+          expect(oclDiv(vint(n), vint(m))).toEqual(vint(Math.trunc(n / m)));
+        },
+      ),
     );
   });
 

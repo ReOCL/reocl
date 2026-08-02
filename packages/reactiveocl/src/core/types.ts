@@ -35,10 +35,6 @@ export function typesEqual(t1: OCLType, t2: OCLType): boolean {
   }
 }
 
-export function typesCompatible(t1: OCLType, t2: OCLType): boolean {
-  return typesEqual(t1, t2);
-}
-
 export function joinTypes(t1: OCLType, t2: OCLType): OCLType | null {
   return typesEqual(t1, t2) ? t1 : null;
 }

@@ -213,47 +213,42 @@ export class ReactiveCollection {
     return result;
   }
 
-  exists(p: Pred): ReadonlySignal<boolean> {
+  private matchingCount(p: Pred, want: (n: number) => boolean): ReadonlySignal<boolean> {
     const agg: MatchingAggregate = { matchingCount: 0 };
     for (const v of this.snapshot()) {
       if (p(v) === true) agg.matchingCount++;
     }
-    const result = signal(agg.matchingCount > 0);
+    const result = signal(want(agg.matchingCount));
     this.subscribe((d: Delta) => {
       if (p(d.val) === true) {
         if (d.tag === "ADD") agg.matchingCount++;
         else agg.matchingCount--;
       }
-      result.value = agg.matchingCount > 0;
+      result.value = want(agg.matchingCount);
     });
     return result;
   }
 
+  exists(p: Pred): ReadonlySignal<boolean> {
+    return this.matchingCount(p, (n) => n > 0);
+  }
+
   one(p: Pred): ReadonlySignal<boolean> {
-    const agg: MatchingAggregate = { matchingCount: 0 };
-    for (const v of this.snapshot()) {
-      if (p(v) === true) agg.matchingCount++;
-    }
-    const result = signal(agg.matchingCount === 1);
+    return this.matchingCount(p, (n) => n === 1);
+  }
+
+  private countProject<R>(project: (n: number) => R): ReadonlySignal<R> {
+    const agg: SizeAggregate = { size: this._values.length };
+    const result = signal(project(agg.size));
     this.subscribe((d: Delta) => {
-      if (p(d.val) === true) {
-        if (d.tag === "ADD") agg.matchingCount++;
-        else agg.matchingCount--;
-      }
-      result.value = agg.matchingCount === 1;
+      agg.size += d.tag === "ADD" ? 1 : -1;
+      result.value = project(agg.size);
     });
     return result;
   }
 
   size(): ReadonlySignal<number> {
-    const agg: SizeAggregate = { size: this._values.length };
-    const result = signal(agg.size);
-    this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") agg.size++;
-      else agg.size--;
-      result.value = agg.size;
-    });
-    return result;
+    return this.countProject((n) => n);
   }
 
   sum(): ReadonlySignal<number> {
@@ -273,25 +268,11 @@ export class ReactiveCollection {
   }
 
   isEmpty(): ReadonlySignal<boolean> {
-    const agg: SizeAggregate = { size: this._values.length };
-    const result = signal(agg.size === 0);
-    this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") agg.size++;
-      else agg.size--;
-      result.value = agg.size === 0;
-    });
-    return result;
+    return this.countProject((n) => n === 0);
   }
 
   notEmpty(): ReadonlySignal<boolean> {
-    const agg: SizeAggregate = { size: this._values.length };
-    const result = signal(agg.size > 0);
-    this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") agg.size++;
-      else agg.size--;
-      result.value = agg.size > 0;
-    });
-    return result;
+    return this.countProject((n) => n > 0);
   }
 
   isUnique(kf: KeyFn): ReadonlySignal<boolean> {

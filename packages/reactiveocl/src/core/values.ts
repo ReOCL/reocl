@@ -20,38 +20,22 @@ export function valuesEqual(a: OCLVal, b: OCLVal): boolean {
     case "VFalse":
       return true;
     case "VInt":
-      return a.n === (b as typeof a).n;
+      return isVInt(b) && a.n === b.n;
     case "VString":
-      return a.s === (b as typeof a).s;
+      return isVString(b) && a.s === b.s;
     case "VObj":
-      return a.oid === (b as typeof a).oid && a.classId === (b as typeof a).classId;
-    case "VColl": {
-      const bs = b as typeof a;
-      if (a.vs.length !== bs.vs.length) return false;
-      for (let i = 0; i < a.vs.length; i++) {
-        if (!valuesEqual(a.vs[i]!, bs.vs[i]!)) return false;
-      }
-      return true;
-    }
+      return isVObj(b) && a.oid === b.oid && a.classId === b.classId;
+    case "VColl":
+      return isVColl(b) && collEqual(a, b);
   }
 }
 
-export function expectBool(v: OCLVal): boolean | null {
-  if (v.tag === "VTrue") return true;
-  if (v.tag === "VFalse") return false;
-  return null;
-}
-
-function expectInt(v: OCLVal): number | null {
-  return v.tag === "VInt" ? v.n : null;
-}
-
-export function expectObj(v: OCLVal): { oid: number; classId: string } | null {
-  return v.tag === "VObj" ? { oid: v.oid, classId: v.classId } : null;
-}
-
-export function expectColl(v: OCLVal): OCLVal[] | null {
-  return v.tag === "VColl" ? v.vs : null;
+function collEqual(a: { vs: OCLVal[] }, b: { vs: OCLVal[] }): boolean {
+  if (a.vs.length !== b.vs.length) return false;
+  for (let i = 0; i < a.vs.length; i++) {
+    if (!valuesEqual(a.vs[i]!, b.vs[i]!)) return false;
+  }
+  return true;
 }
 
 export function isVTrue(v: OCLVal): v is { tag: "VTrue" } {
@@ -71,19 +55,6 @@ export function isVObj(v: OCLVal): v is { tag: "VObj"; oid: number; classId: str
 }
 export function isVColl(v: OCLVal): v is { tag: "VColl"; vs: OCLVal[] } {
   return v.tag === "VColl";
-}
-
-export function asVInt(v: OCLVal): number | undefined {
-  return v.tag === "VInt" ? v.n : undefined;
-}
-export function asVString(v: OCLVal): string | undefined {
-  return v.tag === "VString" ? v.s : undefined;
-}
-export function asVObj(v: OCLVal): { oid: number; classId: string } | undefined {
-  return v.tag === "VObj" ? { oid: v.oid, classId: v.classId } : undefined;
-}
-export function asVColl(v: OCLVal): OCLVal[] | undefined {
-  return v.tag === "VColl" ? v.vs : undefined;
 }
 
 export function boolVal(b: boolean): OCLVal {
@@ -108,44 +79,31 @@ export function valKey(v: OCLVal): string {
 }
 
 export function oclNot(a: OCLVal): OCLVal | null {
-  const ba = expectBool(a);
-  if (ba === null) return null;
-  return boolVal(!ba);
+  if (isVTrue(a)) return VFalse;
+  if (isVFalse(a)) return VTrue;
+  return null;
 }
 
 export function oclXor(a: OCLVal, b: OCLVal): OCLVal | null {
-  const ba = expectBool(a);
-  const bb = expectBool(b);
-  if (ba === null || bb === null) return null;
-  return boolVal(ba !== bb);
+  if (!isVTrue(a) && !isVFalse(a)) return null;
+  if (!isVTrue(b) && !isVFalse(b)) return null;
+  return boolVal(a.tag !== b.tag);
 }
 
 export function oclAdd(a: OCLVal, b: OCLVal): OCLVal | null {
-  const n = expectInt(a);
-  const m = expectInt(b);
-  if (n === null || m === null) return null;
-  return vint(n + m);
+  return isVInt(a) && isVInt(b) ? vint(a.n + b.n) : null;
 }
 
 export function oclSub(a: OCLVal, b: OCLVal): OCLVal | null {
-  const n = expectInt(a);
-  const m = expectInt(b);
-  if (n === null || m === null) return null;
-  return vint(n - m);
+  return isVInt(a) && isVInt(b) ? vint(a.n - b.n) : null;
 }
 
 export function oclMul(a: OCLVal, b: OCLVal): OCLVal | null {
-  const n = expectInt(a);
-  const m = expectInt(b);
-  if (n === null || m === null) return null;
-  return vint(n * m);
+  return isVInt(a) && isVInt(b) ? vint(a.n * b.n) : null;
 }
 
 export function oclDiv(a: OCLVal, b: OCLVal): OCLVal | null {
-  const n = expectInt(a);
-  const m = expectInt(b);
-  if (n === null || m === null || m === 0) return null;
-  return vint(n / m);
+  return isVInt(a) && isVInt(b) && b.n !== 0 ? vint(Math.trunc(a.n / b.n)) : null;
 }
 
 export function oclEq(a: OCLVal, b: OCLVal): OCLVal {
@@ -157,29 +115,17 @@ export function oclNeq(a: OCLVal, b: OCLVal): OCLVal {
 }
 
 export function oclLt(a: OCLVal, b: OCLVal): OCLVal | null {
-  const n = expectInt(a);
-  const m = expectInt(b);
-  if (n === null || m === null) return null;
-  return boolVal(n < m);
+  return isVInt(a) && isVInt(b) ? boolVal(a.n < b.n) : null;
 }
 
 export function oclGt(a: OCLVal, b: OCLVal): OCLVal | null {
-  const n = expectInt(a);
-  const m = expectInt(b);
-  if (n === null || m === null) return null;
-  return boolVal(n > m);
+  return isVInt(a) && isVInt(b) ? boolVal(a.n > b.n) : null;
 }
 
 export function oclLeq(a: OCLVal, b: OCLVal): OCLVal | null {
-  const n = expectInt(a);
-  const m = expectInt(b);
-  if (n === null || m === null) return null;
-  return boolVal(n <= m);
+  return isVInt(a) && isVInt(b) ? boolVal(a.n <= b.n) : null;
 }
 
 export function oclGeq(a: OCLVal, b: OCLVal): OCLVal | null {
-  const n = expectInt(a);
-  const m = expectInt(b);
-  if (n === null || m === null) return null;
-  return boolVal(n >= m);
+  return isVInt(a) && isVInt(b) ? boolVal(a.n >= b.n) : null;
 }

@@ -51,18 +51,22 @@ export class TypedReactiveCollection<T = ReactiveObject> {
   }
 
   add(obj: ReactiveObject): void {
-    this._map.set(key(obj), obj);
+    const k = key(obj);
+    if (this._map.has(k)) return;
+    this._map.set(k, obj);
     this.coll.add(obj.toVal());
     recordUndo(() => this.removeByOid(obj.classId, obj.oid));
   }
 
   addAll(objs: ReactiveObject[]): void {
-    for (const obj of objs) {
+    const fresh = objs.filter((o) => !this._map.has(key(o)));
+    if (fresh.length === 0) return;
+    for (const obj of fresh) {
       this._map.set(key(obj), obj);
     }
-    this.coll.addAll(objs.map((o) => o.toVal()));
+    this.coll.addAll(fresh.map((o) => o.toVal()));
     recordUndo(() => {
-      for (const obj of objs) this.removeByOid(obj.classId, obj.oid);
+      for (const obj of fresh) this.removeByOid(obj.classId, obj.oid);
     });
   }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { ReactiveCollection } from "@core/reactive-collection";
-import { asVInt, vcoll, vint, vobj, vstring, type OCLVal } from "@core/values";
+import { isVInt, vcoll, vint, vobj, vstring, type OCLVal } from "@core/values";
 
 describe("content and membership", () => {
   it("starts from the values it was constructed with", () => {
@@ -428,7 +428,7 @@ describe("the version counter", () => {
 });
 
 describe("undefined predicates and images", () => {
-  const gt3 = (v: OCLVal) => (asVInt(v) !== null && asVInt(v)! > 3 ? true : null);
+  const gt3 = (v: OCLVal) => (isVInt(v) && v.n > 3 ? true : null);
 
   it("reject excludes elements whose predicate is undefined", () => {
     const c = new ReactiveCollection([vint(1)]);
@@ -437,7 +437,7 @@ describe("undefined predicates and images", () => {
 
   it("collect drops elements whose image is undefined, from the start and as they arrive", () => {
     const c = new ReactiveCollection([vint(1)]);
-    const view = c.collect((v) => (asVInt(v) !== null && asVInt(v)! > 3 ? v : null));
+    const view = c.collect((v) => (isVInt(v) && v.n > 3 ? v : null));
     expect(view.snapshot()).toHaveLength(0);
     c.add(vint(2));
     expect(view.snapshot()).toHaveLength(0);
@@ -483,7 +483,7 @@ describe("undefined predicates and images", () => {
 });
 
 describe("isUnique bookkeeping", () => {
-  const keyOf = (v: OCLVal) => asVInt(v) ?? null;
+  const keyOf = (v: OCLVal) => (isVInt(v) ? v.n : null);
 
   it("a key made unique again stays counted while it is unique", () => {
     const c = new ReactiveCollection([vint(1), vint(1)]);
