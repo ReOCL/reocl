@@ -4,11 +4,10 @@ import type { OCLVal } from "./values";
 
 export class Store {
   private readonly cells: Map<StateId, Signal<OCLVal>>;
-  private recorder: Heap | null;
+  private readonly recorders: Heap[] = [];
 
   constructor() {
     this.cells = new Map();
-    this.recorder = null;
   }
 
   register(C: ClassId, oid: number, f: FieldId, initial: OCLVal): Signal<OCLVal> {
@@ -34,17 +33,19 @@ export class Store {
   }
 
   beginRecording(): Heap {
-    this.recorder = new Map();
-    return this.recorder;
+    const h = new Map<StateId, OCLVal>();
+    this.recorders.push(h);
+    return h;
   }
 
   endRecording(): void {
-    this.recorder = null;
+    this.recorders.pop();
   }
 
   private record(sid: StateId, cell: Signal<OCLVal>): void {
-    if (!this.recorder || this.recorder.has(sid)) return;
-    this.recorder.set(
+    const recorder = this.recorders[this.recorders.length - 1];
+    if (!recorder || recorder.has(sid)) return;
+    recorder.set(
       sid,
       untracked(() => cell.value),
     );

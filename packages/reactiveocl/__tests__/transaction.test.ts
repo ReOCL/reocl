@@ -124,6 +124,57 @@ describe("@pre reads", () => {
   });
 });
 
+describe("reentrancy", () => {
+  it("an inner transaction cannot steal the outer journal", () => {
+    const { store, cls, members } = employees([100, 200]);
+    const outer = store.transaction();
+    const inner = store.transaction();
+
+    outer.begin();
+    inner.begin();
+    outer.mutate(() => members.add(cls.create({ salary: 300 })));
+    inner.mutate(() => members.add(cls.create({ salary: 400 })));
+
+    inner.rollback();
+    expect(members.size().value).toBe(3);
+
+    outer.rollback();
+    expect(members.size().value).toBe(2);
+  });
+
+  it("pre-state resolves to the innermost active transaction", () => {
+    const { store, read } = cellStore(100);
+    const outer = new Transaction(store);
+    const inner = new Transaction(store);
+
+    outer.begin();
+    outer.mutate(() => store.write("C:1:x", vint(200)));
+    inner.begin();
+    inner.mutate(() => store.write("C:1:x", vint(300)));
+    expect(read()).toBe(300);
+    expect(inner.$pre("C:1:x")).toEqual(vint(200));
+    expect(outer.$pre("C:1:x")).toEqual(vint(100));
+
+    inner.rollback();
+    expect(read()).toBe(200);
+
+    outer.rollback();
+    expect(read()).toBe(100);
+  });
+
+  it("a direct collection edit between begin and commit is still journaled", () => {
+    const { store, cls, members } = employees([100, 200]);
+    const tx = store.transaction();
+
+    tx.begin();
+    members.add(cls.create({ salary: 300 }));
+    expect(members.size().value).toBe(3);
+
+    tx.rollback();
+    expect(members.size().value).toBe(2);
+  });
+});
+
 describe("rolling back collection membership", () => {
   it("additions survive a successful commit", () => {
     const { store, cls, members } = employees([100, 200]);

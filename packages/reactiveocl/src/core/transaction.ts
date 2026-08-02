@@ -1,17 +1,23 @@
 import { batch, untracked, type ReadonlySignal } from "./signal";
 import { Store, type Heap } from "./store";
 
-let currentPre: { heap: Heap; store: Store } | null = null;
+let begun: Transaction[] = [];
 
-let currentJournal: (() => void)[] | null = null;
+let recordingJournal: (() => void)[] | null = null;
+
+let replaying = 0;
 
 export function recordUndo(undo: () => void): void {
-  if (currentJournal) currentJournal.push(undo);
+  if (replaying > 0) return;
+  if (recordingJournal) {
+    recordingJournal.push(undo);
+  } else {
+    begun[begun.length - 1]?.recordUndo(undo);
+  }
 }
 
 export function $pre(sid: string): ReturnType<Store["read"]> {
-  if (!currentPre) return undefined;
-  return currentPre.heap.get(sid) ?? currentPre.store.read(sid);
+  return begun[begun.length - 1]?.$pre(sid);
 }
 
 export class Transaction {
@@ -33,15 +39,21 @@ export class Transaction {
   }
 
   begin(): void {
+    if (this.heap) throw new Error("Transaction already begun");
     this.heap = this.store.beginRecording();
     this.journal = [];
-    currentPre = { heap: this.heap, store: this.store };
-    currentJournal = this.journal;
+    begun.push(this);
   }
 
   mutate(fn: () => void): void {
     if (!this.heap) throw new Error("Transaction not begun - call begin() first");
-    batch(() => fn());
+    const prev = recordingJournal;
+    recordingJournal = this.journal;
+    try {
+      batch(() => fn());
+    } finally {
+      recordingJournal = prev;
+    }
   }
 
   commit(): boolean {
@@ -65,12 +77,19 @@ export class Transaction {
     this.undo(heap, journal);
   }
 
+  recordUndo(undo: () => void): void {
+    if (this.journal) this.journal.push(undo);
+  }
+
   private finish(): { heap: Heap; journal: (() => void)[] } {
+    const top = begun[begun.length - 1];
+    if (top !== this) {
+      throw new Error("Transaction finished out of order");
+    }
+    begun.pop();
     const heap = this.heap!;
     const journal = this.journal ?? [];
     this.store.endRecording();
-    currentPre = null;
-    currentJournal = null;
     this.heap = null;
     this.journal = null;
     return { heap, journal };
@@ -78,9 +97,14 @@ export class Transaction {
 
   private undo(heap: Heap, journal: (() => void)[]): void {
     this.store.restore(heap);
-    batch(() => {
-      for (let i = journal.length - 1; i >= 0; i--) journal[i]!();
-    });
+    replaying++;
+    try {
+      batch(() => {
+        for (let i = journal.length - 1; i >= 0; i--) journal[i]!();
+      });
+    } finally {
+      replaying--;
+    }
   }
 
   $pre(sid: string): ReturnType<Store["read"]> {

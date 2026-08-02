@@ -62,11 +62,11 @@ export class ReactiveCollection {
   }
 
   snapshot(): readonly OCLVal[] {
-    return this._values;
+    return this._values.slice();
   }
 
   get value(): OCLVal[] {
-    return this._values;
+    return this._values.slice();
   }
 
   get signal(): ReadonlySignal<OCLVal[]> {
