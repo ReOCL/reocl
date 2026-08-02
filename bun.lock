@@ -13,13 +13,13 @@
       "name": "benchmark",
       "version": "1.0.0",
       "dependencies": {
-        "@faker-js/faker": "latest",
-        "@stekoe/ocl.js": "latest",
+        "@faker-js/faker": "10.5.0",
+        "@stekoe/ocl.js": "1.7.0",
         "reactiveocl": "workspace:*",
       },
       "devDependencies": {
-        "bun-types": "latest",
-        "typescript": "latest",
+        "bun-types": "^1.3.14",
+        "typescript": "^7.0.2",
       },
     },
     "packages/demo-vite": {
