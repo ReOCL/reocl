@@ -23,9 +23,7 @@ export type FieldDef =
 
 export type FieldDefMap = Record<string, FieldDef>;
 
-/** Options for registering a class, e.g. its superclass. */
 export interface ClassOptions {
-  /** Superclass id. It must already be registered. */
   extends?: ClassId;
 }
 
@@ -42,21 +40,16 @@ function fieldDefType(def: FieldDef): OCLType {
   }
 }
 
-/** A class registered with the store. */
 export class RegisteredClass {
   constructor(
     public readonly classId: ClassId,
-    /** Own fields plus the ones inherited from the superclass chain. */
     public readonly fields: FieldDefMap,
     private store: Store,
     private oidSource: () => number,
-    /** Superclass id, if this class extends another one. */
     public readonly superclass: ClassId | null = null,
-    /** This class and its superclasses, most specific first. */
     public readonly ancestry: readonly ClassId[] = [classId],
   ) {}
 
-  /** Create a new instance of this class. */
   create(fieldValues: Record<string, number | string | boolean>): ReactiveObject {
     const oid = this.oidSource();
     const collections = new Map<string, TypedReactiveCollection>();
@@ -99,7 +92,6 @@ export class RegisteredClass {
   }
 }
 
-/** High-level store: register metamodel classes, create reactive objects. */
 export class ReactiveStore {
   private readonly store: Store;
   private readonly classes: Map<ClassId, RegisteredClass>;
@@ -111,12 +103,10 @@ export class ReactiveStore {
     this.nextOid = new Map();
   }
 
-  /** The underlying core store (for Transaction compatibility). */
   get core(): Store {
     return this.store;
   }
 
-  /** Register a metamodel class with its fields, optionally extending another one. */
   registerClass(
     classId: ClassId,
     fields: FieldDefMap,
@@ -130,7 +120,6 @@ export class ReactiveStore {
     }
     const parent = superclass !== null ? this.classes.get(superclass)! : null;
     const inherited = parent ? parent.fields : {};
-    // The superclass is registered first, so its ancestry is already known.
     const ancestry = parent ? [classId, ...parent.ancestry] : [classId];
 
     this.nextOid.set(classId, 1);
@@ -150,17 +139,10 @@ export class ReactiveStore {
     return cls;
   }
 
-  /** Get a registered class. */
   getClass(classId: ClassId): RegisteredClass | undefined {
     return this.classes.get(classId);
   }
 
-  /**
-   * The registered classes seen as a metamodel, for the type checker and the
-   * expression evaluator. `extends` is the reflexive-transitive subclass
-   * relation, so it also drives oclIsKindOf. Inherited fields are merged at
-   * registration time, so neither lookup has to walk the hierarchy here.
-   */
   get metaModel(): MetaModel {
     return {
       fieldType: (C, f) => {
@@ -171,7 +153,6 @@ export class ReactiveStore {
     };
   }
 
-  /** Create a Transaction watched by invariant signals. */
   transaction(...invariants: ReadonlySignal<boolean>[]): Transaction {
     const tx = new Transaction(this.store);
     for (const inv of invariants) tx.watch(inv);
