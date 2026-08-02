@@ -14,7 +14,6 @@ export class EagerDepartmentImpl implements Department {
   }
 
   get activeCapacity(): boolean {
-    // Faithful OCL: self.employees->select(e | e.active)->size() <= self.capacity
     const active = [...this.dept.employees].filter((e) => e.active);
     return active.length <= this.capacity;
   }

@@ -2,7 +2,6 @@ import type { Employee } from "./model";
 import { faker } from "@faker-js/faker";
 import { setRandomSeed } from "bun:jsc";
 
-// Seed the random number generator for reproducibility
 setRandomSeed(42);
 faker.seed(42);
 
@@ -35,18 +34,15 @@ export function makeScenario(n: number, totalMutations: number, activeRatio = 0.
 
   for (let i = 0; i < totalMutations; i++) {
     if (i % 2 === 0 && live.length > 0) {
-      // REMOVE: pick one currently-live employee.
       const idx = Math.floor(Math.random() * live.length);
       const employee = live[idx]!;
 
       mutations.push({ kind: "remove", employee });
 
-      // Swap-remove from live array.
       const last = live[live.length - 1]!;
       live[idx] = last;
       live.pop();
     } else {
-      // ADD: create a fresh employee.
       const employee: Employee = {
         id: nextId++,
         firstName: faker.person.firstName(),
@@ -59,8 +55,6 @@ export function makeScenario(n: number, totalMutations: number, activeRatio = 0.
     }
   }
 
-  // Capacity is high enough that the invariant usually remains true,
-  // but the benchmark still has to maintain the exact active count.
   const capacity = Math.ceil(0.6 * n);
 
   return {

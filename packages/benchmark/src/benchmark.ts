@@ -6,6 +6,12 @@ import { EagerDepartmentImpl } from "./eager";
 import { OclJsDepartment } from "./ocl_js";
 import type { Department } from "./model";
 
+// Benchmarks the three engines - ReOCL (incremental), a plain eager
+// implementation, and the ocl.js library - on the same department scenario:
+// one million employees in the largest size, mutations mixed between adds and
+// removes, and an `activeCapacity` invariant read after every mutation.
+// Measures init cost, per-mutation cost, and the two combined.
+
 // https://bun.com/docs/guides/process/argv
 const { values } = parseArgs({
   args: Bun.argv,
@@ -22,6 +28,9 @@ const SIZES = values.sizes!.split(",").map(Number);
 const BASE_MUTATIONS = Number(values.ops!);
 const MUTATIONS_SCALE = values["ops-scale"] as boolean;
 
+// With scaling, the mutation budget shrinks as the model grows, so the run
+// stays interactive at the million-employee size while still stressing the
+// incremental machinery at the smaller ones.
 function mutationsForN(n: number): number {
   if (!MUTATIONS_SCALE) return BASE_MUTATIONS;
   if (n <= 1000) return BASE_MUTATIONS;
@@ -30,6 +39,7 @@ function mutationsForN(n: number): number {
   return Math.round(BASE_MUTATIONS / 50);
 }
 
+// SINK absorbs the invariant result, so no engine can skip maintaining it.
 let SINK = 0;
 
 function runMutateLoop(
@@ -49,6 +59,9 @@ function runMutateLoop(
   }
 }
 
+// Stat reports avg and median (p50); the median is what the summary tables
+// show, because a single cold outlier distorts the mean far more than the
+// latency a user would actually perceive.
 interface Stat {
   avg: number;
   p50: number;
@@ -86,7 +99,8 @@ function warmup(deps: Department[], mutations: ReturnType<typeof makeScenario>["
   }
 }
 
-// Correctness check
+// Sanity check: run the same mutations through all three engines and require
+// them to agree on the invariant after every step, before any timing begins.
 {
   const scenario = makeScenario(100, 500);
   const reocl = new ReoclDepartment(scenario.initialEmployees, scenario.capacity);
@@ -137,7 +151,9 @@ for (const n of SIZES) {
   const nMutations = mutationsForN(n);
   const scenario = makeScenario(n, nMutations);
 
-  // --- Init measurement ---
+  // Init measurement: construct the department fresh, without mutating it.
+  // This is where ReOCL pays for building its indexes, and ocl.js for parsing
+  // and compiling the invariant source.
   const INIT_RUNS = n <= 1000 ? 20 : 5;
   console.group(`N=${n.toLocaleString()}  mutations=${nMutations.toLocaleString()}`);
   console.log(`init: ${INIT_RUNS} runs`);
@@ -174,7 +190,8 @@ for (const n of SIZES) {
     "OCL.js": { runs: INIT_RUNS, avg: ms(ocljsInit.avg, 3), p50: ms(ocljsInit.p50, 3) },
   });
 
-  // --- Warmup ---
+  // Warmup: let JIT compilation and cold module loading settle before the
+  // per-operation numbers are taken.
   {
     const wR = new ReoclDepartment(scenario.initialEmployees, scenario.capacity);
     const wE = new EagerDepartmentImpl(scenario.initialEmployees, scenario.capacity);
@@ -182,7 +199,9 @@ for (const n of SIZES) {
     warmup([wR, wE, wO], scenario.mutations);
   }
 
-  // --- Steady-state per-operation measurement ---
+  // Steady-state per-mutation cost: each trial replays the whole mutation list
+  // on a fresh department and divides by the number of mutations, so adds and
+  // removes are averaged together.
   const MUTATE_TRIALS = n <= 1000 ? 10 : 3;
   const ocljsTrials = n <= 100 ? MUTATE_TRIALS : 1;
   console.log(
@@ -224,7 +243,9 @@ for (const n of SIZES) {
     "OCL.js": { runs: ocljsTrials, avg: us(ocljsMutate.avg, 2), p50: us(ocljsMutate.p50, 2) },
   });
 
-  // --- Directly measured total (init + mutations in one timed block) ---
+  // Directly measured total: init plus all mutations in one timed block. This
+  // is the end-to-end cost a user pays, and it can differ from init + N x
+  // per-mutation because of allocation and GC effects across the phases.
   const TOTAL_TRIALS = MUTATE_TRIALS;
   const ocljsTotalTrials = n <= 100 ? TOTAL_TRIALS : 1;
   console.log(`total measured (reocl/eager x${TOTAL_TRIALS}, ocljs x${ocljsTotalTrials})`);
@@ -294,6 +315,8 @@ for (const n of SIZES) {
   console.groupEnd();
 }
 
+// Machine-readable results for the research scripts; the tables below are for
+// a quick glance at a single run.
 await Bun.write(
   "results/rq2.json",
   JSON.stringify(

@@ -1,7 +1,6 @@
 import { OclEngine } from "@stekoe/ocl.js";
 import type { Employee, Department } from "./model";
 
-// The ocl.js library works with plain JavaScript objects and arrays.
 type OclJsDepartmentModel = {
   employees: Employee[];
   capacity: number;
