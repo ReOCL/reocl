@@ -9,7 +9,7 @@ import type {
   SumAggregate,
 } from "./types";
 import type { OCLVal } from "./values";
-import { valuesEqual, valKey } from "./values";
+import { valKey } from "./values";
 
 type Pred = (v: OCLVal) => boolean | null;
 type Mapper = (v: OCLVal) => OCLVal | null;
@@ -20,15 +20,45 @@ export class ReactiveCollection {
   private _version: Signal<number> = signal(0);
   private subscribers = new Set<DeltaSubscriber>();
 
-  private _index: Map<string, number> = new Map();
+  private _index: Map<string, number[]> = new Map();
+
+  private _teardown: (() => void)[] = [];
+
+  private _signal?: ReadonlySignal<OCLVal[]>;
 
   constructor(initial?: OCLVal[]) {
     if (initial?.length) {
       this._values = initial.slice();
       for (let i = 0; i < this._values.length; i++) {
-        this._index.set(valKey(this._values[i]!), i);
+        this._indexAdd(valKey(this._values[i]!), i);
       }
     }
+  }
+
+  private _indexAdd(key: string, i: number): void {
+    const at = this._index.get(key);
+    if (at === undefined) this._index.set(key, [i]);
+    else at.push(i);
+  }
+
+  private _indexDrop(key: string, i: number): void {
+    const at = this._index.get(key);
+    if (at === undefined) return;
+    const pos = at.lastIndexOf(i);
+    if (pos !== -1) at.splice(pos, 1);
+    if (at.length === 0) this._index.delete(key);
+  }
+
+  private _indexMove(key: string, from: number, to: number): void {
+    const at = this._index.get(key);
+    if (at === undefined) return;
+    const pos = at.lastIndexOf(from);
+    if (pos !== -1) at[pos] = to;
+  }
+
+  private _positionOf(v: OCLVal): number | undefined {
+    const at = this._index.get(valKey(v));
+    return at !== undefined && at.length > 0 ? at[at.length - 1] : undefined;
   }
 
   snapshot(): readonly OCLVal[] {
@@ -40,10 +70,13 @@ export class ReactiveCollection {
   }
 
   get signal(): ReadonlySignal<OCLVal[]> {
-    return computed(() => {
-      void this._version.value;
-      return this._values.slice();
-    });
+    if (this._signal === undefined) {
+      this._signal = computed(() => {
+        void this._version.value;
+        return this._values.slice();
+      });
+    }
+    return this._signal;
   }
 
   version(): ReadonlySignal<number> {
@@ -52,7 +85,7 @@ export class ReactiveCollection {
 
   add(v: OCLVal): void {
     batch(() => {
-      this._index.set(valKey(v), this._values.length);
+      this._indexAdd(valKey(v), this._values.length);
       this._values.push(v);
       this._version.value++;
 
@@ -66,7 +99,7 @@ export class ReactiveCollection {
     if (vs.length === 0) return;
     batch(() => {
       for (const v of vs) {
-        this._index.set(valKey(v), this._values.length);
+        this._indexAdd(valKey(v), this._values.length);
         this._values.push(v);
       }
       this._version.value++;
@@ -81,28 +114,21 @@ export class ReactiveCollection {
 
   remove(v: OCLVal): void {
     batch(() => {
-      const idx = this._index.get(valKey(v));
-      if (idx !== undefined) {
-        this._removeAt(idx);
-      } else if (v.tag !== "VObj") {
-        // Objects are always indexed, so a miss means "not a member".
-        this._removeByScan(v);
-      }
+      const idx = this._positionOf(v);
+      if (idx !== undefined) this._removeAt(idx);
     });
   }
 
-  /** Swap-remove the element at `idx`, keeping the key index consistent. */
   private _removeAt(idx: number): void {
     const removed = this._values[idx]!;
     const lastIdx = this._values.length - 1;
 
-    // Delete first, so that a duplicate moved into `idx` re-registers its key.
-    this._index.delete(valKey(removed));
+    this._indexDrop(valKey(removed), idx);
 
     if (idx !== lastIdx) {
       const last = this._values[lastIdx]!;
       this._values[idx] = last;
-      this._index.set(valKey(last), idx);
+      this._indexMove(valKey(last), lastIdx, idx);
     }
 
     this._values.pop();
@@ -113,15 +139,15 @@ export class ReactiveCollection {
     }
   }
 
-  private _removeByScan(v: OCLVal): void {
-    const idx = this._values.findIndex((w) => valuesEqual(w, v));
-    if (idx === -1) return;
-    this._removeAt(idx);
-  }
-
   subscribe(fn: DeltaSubscriber): () => void {
     this.subscribers.add(fn);
     return () => void this.subscribers.delete(fn);
+  }
+
+  dispose(): void {
+    for (const off of this._teardown) off();
+    this._teardown = [];
+    this.subscribers.clear();
   }
 
   select(p: Pred): ReactiveCollection {
@@ -130,15 +156,17 @@ export class ReactiveCollection {
       const b = p(v);
       if (b === true) result.add(v);
     }
-    this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") {
-        const b = p(d.val);
-        if (b === true) result.add(d.val);
-      } else {
-        const b = p(d.val);
-        if (b === true) result.remove(d.val);
-      }
-    });
+    result._teardown.push(
+      this.subscribe((d: Delta) => {
+        if (d.tag === "ADD") {
+          const b = p(d.val);
+          if (b === true) result.add(d.val);
+        } else {
+          const b = p(d.val);
+          if (b === true) result.remove(d.val);
+        }
+      }),
+    );
     return result;
   }
 
@@ -155,19 +183,20 @@ export class ReactiveCollection {
       const w = f(v);
       if (w !== null) result.add(w);
     }
-    this.subscribe((d: Delta) => {
-      if (d.tag === "ADD") {
-        const w = f(d.val);
-        if (w !== null) result.add(w);
-      } else {
-        const w = f(d.val);
-        if (w !== null) result.remove(w);
-      }
-    });
+    result._teardown.push(
+      this.subscribe((d: Delta) => {
+        if (d.tag === "ADD") {
+          const w = f(d.val);
+          if (w !== null) result.add(w);
+        } else {
+          const w = f(d.val);
+          if (w !== null) result.remove(w);
+        }
+      }),
+    );
     return result;
   }
 
-  /** ForAllAggregate: violators are counted, so the result is a zero test. */
   forAll(p: Pred): ReadonlySignal<boolean> {
     const agg: ForAllAggregate = { violatingCount: 0 };
     for (const v of this.snapshot()) {
@@ -184,7 +213,6 @@ export class ReactiveCollection {
     return result;
   }
 
-  /** MatchingAggregate: matches are counted, so the result is a positivity test. */
   exists(p: Pred): ReadonlySignal<boolean> {
     const agg: MatchingAggregate = { matchingCount: 0 };
     for (const v of this.snapshot()) {
@@ -201,7 +229,6 @@ export class ReactiveCollection {
     return result;
   }
 
-  /** MatchingAggregate: the same count, read back as an equality with one. */
   one(p: Pred): ReadonlySignal<boolean> {
     const agg: MatchingAggregate = { matchingCount: 0 };
     for (const v of this.snapshot()) {
@@ -218,7 +245,6 @@ export class ReactiveCollection {
     return result;
   }
 
-  /** SizeAggregate: a counter, also read back by isEmpty and notEmpty. */
   size(): ReadonlySignal<number> {
     const agg: SizeAggregate = { size: this._values.length };
     const result = signal(agg.size);
@@ -230,11 +256,6 @@ export class ReactiveCollection {
     return result;
   }
 
-  /**
-   * Running total: non-integer elements are ignored and the result is always
-   * defined. Incremental maintenance is exact for integer collections, which is
-   * what the typing of sum requires of the source collection.
-   */
   sum(): ReadonlySignal<number> {
     const agg: SumAggregate = { total: 0 };
     for (const v of this.snapshot()) {
@@ -273,7 +294,6 @@ export class ReactiveCollection {
     return result;
   }
 
-  /** IsUniqueAggregate: per-key occurrence counts, plus the duplicated-key count. */
   isUnique(kf: KeyFn): ReadonlySignal<boolean> {
     const agg: IsUniqueAggregate = { counts: new Map(), duplicates: 0 };
     for (const v of this.snapshot()) {

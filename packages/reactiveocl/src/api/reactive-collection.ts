@@ -1,5 +1,6 @@
 import { ReactiveCollection } from "@core/reactive-collection";
 import { batch, computed, type ReadonlySignal } from "@core/signal";
+import { recordUndo } from "@core/transaction";
 import type { OCLVal } from "@core/values";
 import { vint } from "@core/values";
 import { ReactiveObject } from "./reactive-object";
@@ -40,11 +41,11 @@ export class TypedReactiveCollection<T = ReactiveObject> {
 
   wrapAs<U>(factory: (obj: ReactiveObject) => U): TypedReactiveCollection<U> {
     const t = new TypedReactiveCollection<U>([], factory);
-    (t as any)._map = this._map;
-    (t as any).coll = this.coll;
-    (t as any)._objects = computed(() => {
-      void (t as any).coll.version().value;
-      return Array.from((t as any)._map.values(), (o: ReactiveObject) => (t as any)._wrap(o));
+    t._map = this._map;
+    t.coll = this.coll;
+    t._objects = computed(() => {
+      void t.coll.version().value;
+      return Array.from(t._map.values(), factory);
     });
     return t;
   }
@@ -52,6 +53,7 @@ export class TypedReactiveCollection<T = ReactiveObject> {
   add(obj: ReactiveObject): void {
     this._map.set(key(obj), obj);
     this.coll.add(obj.toVal());
+    recordUndo(() => this.removeByOid(obj.classId, obj.oid));
   }
 
   addAll(objs: ReactiveObject[]): void {
@@ -59,19 +61,20 @@ export class TypedReactiveCollection<T = ReactiveObject> {
       this._map.set(key(obj), obj);
     }
     this.coll.addAll(objs.map((o) => o.toVal()));
+    recordUndo(() => {
+      for (const obj of objs) this.removeByOid(obj.classId, obj.oid);
+    });
   }
 
   removeByOid(classId: string, oid: number): void {
     const k = `${classId}:${oid}`;
     const obj = this._map.get(k);
     if (!obj) return;
-    // The delta has to be processed while the object is still resolvable, but
-    // dependents must only see the result once it is gone from the map. One
-    // batch around both keeps them from observing the state in between.
     batch(() => {
       this.coll.remove(obj.toVal());
       this._map.delete(k);
     });
+    recordUndo(() => this.add(obj));
   }
 
   private objFrom(v: OCLVal): ReactiveObject | undefined {
@@ -121,19 +124,19 @@ export class TypedReactiveCollection<T = ReactiveObject> {
   }
 
   select(pred: (obj: T) => boolean | null): TypedReactiveCollection<T> {
-    const t = new TypedReactiveCollection<T>([], this._wrap);
+    const wrap = this._wrap;
+    const t = new TypedReactiveCollection<T>([], wrap);
     t._map = this._map;
-    (t as any).coll = this.coll.select((v) => {
+    t.coll = this.coll.select((v) => {
       const obj = this.objFrom(v);
-      return obj ? pred(this._wrap(obj)) : null;
+      return obj ? pred(wrap(obj)) : null;
     });
-    (t as any)._objects = computed(() => {
-      void (t as any).coll.version().value;
+    t._objects = computed(() => {
+      void t.coll.version().value;
       const objs: T[] = [];
-      const raw = (t as any).coll.snapshot();
-      for (const v of raw) {
+      for (const v of t.coll.snapshot()) {
         const obj = t.objFrom(v);
-        if (obj) objs.push((t as any)._wrap(obj));
+        if (obj) objs.push(wrap(obj));
       }
       return objs;
     });
@@ -143,17 +146,16 @@ export class TypedReactiveCollection<T = ReactiveObject> {
   collect(fn: (obj: T) => number | null): TypedReactiveCollection {
     const t = new TypedReactiveCollection([]);
     t._map = this._map;
-    (t as any).coll = this.coll.collect((v) => {
+    t.coll = this.coll.collect((v) => {
       const obj = this.objFrom(v);
       if (!obj) return null;
       const n = fn(this._wrap(obj));
       return n === null ? null : vint(n);
     });
-    (t as any)._objects = computed(() => {
-      void (t as any).coll.version().value;
+    t._objects = computed(() => {
+      void t.coll.version().value;
       const objs: ReactiveObject[] = [];
-      const raw = (t as any).coll.snapshot();
-      for (const v of raw) {
+      for (const v of t.coll.snapshot()) {
         const obj = t.objFrom(v);
         if (obj) objs.push(obj);
       }
