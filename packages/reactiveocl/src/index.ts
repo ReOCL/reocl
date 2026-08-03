@@ -20,3 +20,36 @@ export { invariant } from "./api/invariant";
 export type { InvariantDef } from "./api/invariant";
 
 export { intSignal, strSignal, boolSignal } from "./api/compiled";
+
+export { $pre } from "./core/transaction";
+
+export type { OCLVal } from "./core/values";
+export {
+  VTrue,
+  VFalse,
+  vint,
+  vstring,
+  vobj,
+  vcoll,
+  boolVal,
+  valuesEqual,
+  valKey,
+  isVTrue,
+  isVFalse,
+  isVInt,
+  isVString,
+  isVObj,
+  isVColl,
+  oclNot,
+  oclXor,
+  oclAdd,
+  oclSub,
+  oclMul,
+  oclDiv,
+  oclEq,
+  oclNeq,
+  oclLt,
+  oclGt,
+  oclLeq,
+  oclGeq,
+} from "./core/values";

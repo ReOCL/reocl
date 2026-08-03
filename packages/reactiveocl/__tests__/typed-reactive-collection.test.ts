@@ -110,6 +110,78 @@ describe("views over wrapped elements", () => {
   });
 });
 
+describe("reject", () => {
+  it("keeps exactly the elements select drops", () => {
+    const { coll } = wrapped([30, 10]);
+    const poor = coll.reject((e) => e.salary$.value > 20);
+    expect(poor.objects.value.length).toBe(1);
+    expect(poor.objects.value[0]!.salary$.value).toBe(10);
+  });
+
+  it("drops the element when the predicate is undefined, as select does", () => {
+    const { coll } = wrapped([30, 10]);
+    expect(coll.reject(() => null).objects.value).toHaveLength(0);
+  });
+
+  it("tracks later additions", () => {
+    const { ec } = employees();
+    const CE = makeCE();
+    const coll = new TypedReactiveCollection([], CE.from);
+    const poor = coll.reject((e) => e.salary$.value > 20);
+    coll.add(ec.create({ salary: 5 }));
+    expect(poor.size().value).toBe(1);
+  });
+});
+
+describe("object occurrences", () => {
+  it("adding the same object twice records two occurrences", () => {
+    const { ec } = employees();
+    const obj = ec.create({ salary: 10 });
+    const coll = new TypedReactiveCollection([]);
+    coll.add(obj);
+    coll.add(obj);
+
+    expect(coll.size().value).toBe(2);
+    expect(coll.objects.value).toHaveLength(2);
+  });
+
+  it("removing withdraws one occurrence and leaves the other", () => {
+    const { ec } = employees();
+    const obj = ec.create({ salary: 10 });
+    const coll = new TypedReactiveCollection([obj, obj]);
+    expect(coll.size().value).toBe(2);
+
+    coll.removeByOid("E", obj.oid);
+    expect(coll.size().value).toBe(1);
+    expect(coll.objects.value).toHaveLength(1);
+
+    coll.removeByOid("E", obj.oid);
+    expect(coll.size().value).toBe(0);
+    expect(coll.objects.value).toHaveLength(0);
+  });
+
+  it("sum over a mapped view adds every occurrence", () => {
+    const { ec } = employees();
+    const obj = ec.create({ salary: 10 });
+    const coll = new TypedReactiveCollection([obj, obj]);
+    expect(coll.collect((o) => o.int("salary")).sum().value).toBe(20);
+  });
+
+  it("isUnique reports a duplicated object", () => {
+    const { ec } = employees();
+    const obj = ec.create({ salary: 10 });
+    const coll = new TypedReactiveCollection([obj, obj]);
+    expect(coll.isUnique((o) => o.oid).value).toBe(false);
+  });
+
+  it("a select view holds one entry per matching occurrence", () => {
+    const { ec } = employees();
+    const obj = ec.create({ salary: 30 });
+    const coll = new TypedReactiveCollection([obj, obj]);
+    expect(coll.select((o) => o.int("salary") > 20).size().value).toBe(2);
+  });
+});
+
 describe("membership", () => {
   it("objects reflects the collection it was constructed from", () => {
     const { ec } = employees();

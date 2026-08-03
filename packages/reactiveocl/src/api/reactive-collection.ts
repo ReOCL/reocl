@@ -12,17 +12,33 @@ function key(obj: ReactiveObject): string {
 export class TypedReactiveCollection<T = ReactiveObject> {
   private coll: ReactiveCollection;
   private _map: Map<string, ReactiveObject> = new Map();
+  private _counts: Map<string, number> = new Map();
   private _objects: ReadonlySignal<T[]>;
   private _wrap: (obj: ReactiveObject) => T;
 
   constructor(initial: ReactiveObject[], wrap?: (obj: ReactiveObject) => T) {
     this._wrap = wrap ?? ((o: ReactiveObject) => o as unknown as T);
-    for (const o of initial) this._map.set(key(o), o);
+    for (const o of initial) this.track(o);
     this.coll = new ReactiveCollection(initial.map((o) => o.toVal()));
     this._objects = computed(() => {
       void this.coll.version().value;
-      return Array.from(this._map.values(), (o) => this._wrap(o));
+      return this.expand(this._wrap);
     });
+  }
+
+  private track(obj: ReactiveObject): void {
+    const k = key(obj);
+    this._map.set(k, obj);
+    this._counts.set(k, (this._counts.get(k) ?? 0) + 1);
+  }
+
+  private expand<U>(wrap: (obj: ReactiveObject) => U): U[] {
+    const out: U[] = [];
+    for (const [k, obj] of this._map) {
+      const occurrences = this._counts.get(k) ?? 1;
+      for (let i = 0; i < occurrences; i++) out.push(wrap(obj));
+    }
+    return out;
   }
 
   get objects(): ReadonlySignal<T[]> {
@@ -42,31 +58,27 @@ export class TypedReactiveCollection<T = ReactiveObject> {
   wrapAs<U>(factory: (obj: ReactiveObject) => U): TypedReactiveCollection<U> {
     const t = new TypedReactiveCollection<U>([], factory);
     t._map = this._map;
+    t._counts = this._counts;
     t.coll = this.coll;
     t._objects = computed(() => {
       void t.coll.version().value;
-      return Array.from(t._map.values(), factory);
+      return t.expand(factory);
     });
     return t;
   }
 
   add(obj: ReactiveObject): void {
-    const k = key(obj);
-    if (this._map.has(k)) return;
-    this._map.set(k, obj);
+    this.track(obj);
     this.coll.add(obj.toVal());
     recordUndo(() => this.removeByOid(obj.classId, obj.oid));
   }
 
   addAll(objs: ReactiveObject[]): void {
-    const fresh = objs.filter((o) => !this._map.has(key(o)));
-    if (fresh.length === 0) return;
-    for (const obj of fresh) {
-      this._map.set(key(obj), obj);
-    }
-    this.coll.addAll(fresh.map((o) => o.toVal()));
+    if (objs.length === 0) return;
+    for (const obj of objs) this.track(obj);
+    this.coll.addAll(objs.map((o) => o.toVal()));
     recordUndo(() => {
-      for (const obj of fresh) this.removeByOid(obj.classId, obj.oid);
+      for (const obj of objs) this.removeByOid(obj.classId, obj.oid);
     });
   }
 
@@ -74,9 +86,15 @@ export class TypedReactiveCollection<T = ReactiveObject> {
     const k = `${classId}:${oid}`;
     const obj = this._map.get(k);
     if (!obj) return;
+    const occurrences = this._counts.get(k) ?? 1;
     batch(() => {
       this.coll.remove(obj.toVal());
-      this._map.delete(k);
+      if (occurrences > 1) {
+        this._counts.set(k, occurrences - 1);
+      } else {
+        this._counts.delete(k);
+        this._map.delete(k);
+      }
     });
     recordUndo(() => this.add(obj));
   }
@@ -131,6 +149,7 @@ export class TypedReactiveCollection<T = ReactiveObject> {
     const wrap = this._wrap;
     const t = new TypedReactiveCollection<T>([], wrap);
     t._map = this._map;
+    t._counts = this._counts;
     t.coll = this.coll.select((v) => {
       const obj = this.objFrom(v);
       return obj ? pred(wrap(obj)) : null;
@@ -147,9 +166,17 @@ export class TypedReactiveCollection<T = ReactiveObject> {
     return t;
   }
 
+  reject(pred: (obj: T) => boolean | null): TypedReactiveCollection<T> {
+    return this.select((obj) => {
+      const b = pred(obj);
+      return b === null ? null : !b;
+    });
+  }
+
   collect(fn: (obj: T) => number | null): TypedReactiveCollection {
     const t = new TypedReactiveCollection([]);
     t._map = this._map;
+    t._counts = this._counts;
     t.coll = this.coll.collect((v) => {
       const obj = this.objFrom(v);
       if (!obj) return null;
