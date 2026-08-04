@@ -11,9 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bunx tsc -p packages/reactiveocl --noEmit
       - run: bunx tsc -p packages/demo-vite --noEmit
       - run: bunx tsc -p packages/benchmark --noEmit
       - run: bunx oxlint
+      - run: bunx oxfmt --check
