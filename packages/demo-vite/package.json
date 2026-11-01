@@ -7,9 +7,9 @@
     "build": "bunx tsc && bunx vite build"
   },
   "dependencies": {
-    "@preact/signals": "^2.11.3",
+    "@preact/signals": "^2.11.4",
     "@preact/signals-core": "1.14.4",
-    "preact": "11.0.1",
+    "preact": "11.1.0",
     "reactiveocl": "workspace:*"
   },
   "devDependencies": {
